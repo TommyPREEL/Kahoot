@@ -31,7 +31,7 @@ const io = new Server(httpServer, {
   },
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3650;
 
 // REST: health check
 app.get('/health', (_req, res) => res.json({ ok: true }));
@@ -50,7 +50,7 @@ io.on('connection', (socket) => {
 
       const clientOrigin = socket.handshake.headers.origin
         || socket.handshake.headers.referer?.replace(/\/$/, '')
-        || 'http://localhost:5173';
+        || 'http://localhost:3600';
       const joinUrl = `${clientOrigin}/?code=${room.code}`;
       const qrCodeDataUrl = await QRCode.toDataURL(joinUrl, {
         width: 300,

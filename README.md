@@ -39,15 +39,15 @@ npm run dev
 ```
 
 This starts:
-- Server on `http://localhost:3001`
-- Client on `http://localhost:5173`
+- Server on `http://localhost:3650`
+- Client on `http://localhost:3600`
 
 ### Usage
 
-1. Open `http://localhost:5173`
+1. Open `http://localhost:3600`
 2. Click **Host a Game** → build your quiz → **Create Room**
 3. Share the room code or QR code with players
-4. Players open `http://localhost:5173` → **Join a Game**
+4. Players open `http://localhost:3600` → **Join a Game**
 5. Host clicks **Start** when everyone is in
 6. Play!
 
