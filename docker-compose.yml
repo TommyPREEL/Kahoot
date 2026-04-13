@@ -1,0 +1,27 @@
+services:
+  kahoot-server:
+    container_name: kahoot-server
+    image: ${SERVER_IMAGE:-ghcr.io/tommypreel/kahoot-server:latest}
+    restart: always
+    environment:
+      - PORT=3650
+    expose:
+      - "3650"
+    networks:
+      - web
+
+  kahoot-client:
+    container_name: kahoot-client
+    image: ${CLIENT_IMAGE:-ghcr.io/tommypreel/kahoot-client:latest}
+    restart: always
+    ports:
+      - "3600:80"
+    depends_on:
+      - kahoot-server
+    networks:
+      - web
+
+networks:
+  web:
+    external: true
+    name: web

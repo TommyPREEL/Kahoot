@@ -26,12 +26,11 @@ app.use(express.json());
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: '*',
+    origin: true,
     methods: ['GET', 'POST'],
   },
 });
 
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 const PORT = process.env.PORT || 3001;
 
 // REST: health check
@@ -49,7 +48,10 @@ io.on('connection', (socket) => {
       const room = createRoom(socket.id, quiz, '');
       room.hostId = socket.id;
 
-      const joinUrl = `${CLIENT_URL}/join?code=${room.code}`;
+      const clientOrigin = socket.handshake.headers.origin
+        || socket.handshake.headers.referer?.replace(/\/$/, '')
+        || 'http://localhost:5173';
+      const joinUrl = `${clientOrigin}/?code=${room.code}`;
       const qrCodeDataUrl = await QRCode.toDataURL(joinUrl, {
         width: 300,
         margin: 2,
