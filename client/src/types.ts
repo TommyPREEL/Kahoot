@@ -32,6 +32,15 @@ export interface Quiz {
   questions: Question[];
 }
 
+export type SavedQuestion = Question & { _answers: AnswerOptionFull[]; _correctBool: boolean };
+
+export interface SavedQuiz {
+  id: string;
+  title: string;
+  questions: SavedQuestion[];
+  savedAt: string;
+}
+
 export interface PlayerAnswer {
   questionIndex: number;
   answer: string | string[] | number;
@@ -69,6 +78,7 @@ export interface GameEndPayload {
 
 export type GameView =
   | 'home'
+  | 'host-library'
   | 'host-setup'
   | 'host-lobby'
   | 'host-game'

@@ -7,12 +7,14 @@ import {
   PlayerStanding,
   QuestionStartPayload,
   QuestionResultsPayload,
+  SavedQuiz,
 } from './types';
 
 import HomePage from './components/HomePage';
 import HostSetup from './components/host/HostSetup';
 import HostLobby from './components/host/HostLobby';
 import HostGame from './components/host/HostGame';
+import QuizLibrary from './components/host/QuizLibrary';
 import PlayerJoin from './components/player/PlayerJoin';
 import PlayerLobby from './components/player/PlayerLobby';
 import PlayerAnswering from './components/player/PlayerAnswering';
@@ -32,6 +34,7 @@ export default function App() {
   const [qrCode, setQrCode]         = useState('');
   const [quiz, setQuiz]             = useState<Quiz | null>(null);
   const [players, setPlayers]       = useState<{ id: string; nickname: string }[]>([]);
+  const [savedQuizToLoad, setSavedQuizToLoad] = useState<SavedQuiz | null>(null);
 
   // Shared game state
   const [question, setQuestion]     = useState<QuestionStartPayload | null>(null);
@@ -144,11 +147,21 @@ export default function App() {
 
   // ── View switcher ─────────────────────────────────────────────────────────
   if (view === 'home') {
-    return <HomePage onHost={() => setView('host-setup')} onJoin={() => setView('player-join')} />;
+    return <HomePage onHost={() => setView('host-setup')} onJoin={() => setView('player-join')} onLibrary={() => setView('host-library')} />;
+  }
+
+  if (view === 'host-library') {
+    return (
+      <QuizLibrary
+        onBack={() => setView('home')}
+        onNew={() => { setSavedQuizToLoad(null); setView('host-setup'); }}
+        onLoad={(quiz) => { setSavedQuizToLoad(quiz); setView('host-setup'); }}
+      />
+    );
   }
 
   if (view === 'host-setup') {
-    return <HostSetup onCreated={handleCreateRoom} onBack={() => setView('home')} />;
+    return <HostSetup onCreated={handleCreateRoom} onBack={() => setView('home')} initialQuiz={savedQuizToLoad ?? undefined} />;
   }
 
   if (view === 'host-lobby') {

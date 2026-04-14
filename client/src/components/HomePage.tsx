@@ -1,9 +1,14 @@
+import { useMemo } from 'react';
+import { getSavedQuizzes } from './host/QuizLibrary';
+
 interface Props {
   onHost: () => void;
   onJoin: () => void;
+  onLibrary: () => void;
 }
 
-export default function HomePage({ onHost, onJoin }: Props) {
+export default function HomePage({ onHost, onJoin, onLibrary }: Props) {
+  const savedCount = useMemo(() => getSavedQuizzes().length, []);
   return (
     <div className="page center" style={{ flexDirection: 'column', gap: '2rem', textAlign: 'center' }}>
       {/* Logo */}
@@ -35,6 +40,25 @@ export default function HomePage({ onHost, onJoin }: Props) {
           style={{ borderRadius: '50px', fontSize: '1.2rem', padding: '1.1rem 2rem' }}
         >
           🎯 Join a Game
+        </button>
+        <button
+          className="btn btn-secondary"
+          onClick={onLibrary}
+          style={{ borderRadius: '50px', fontSize: '1rem', padding: '0.75rem 2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+        >
+          📚 My Quizzes
+          {savedCount > 0 && (
+            <span style={{
+              background: '#ffd700',
+              color: '#2d0a6e',
+              borderRadius: '50px',
+              padding: '0.1rem 0.55rem',
+              fontSize: '0.8rem',
+              fontWeight: 800,
+            }}>
+              {savedCount}
+            </span>
+          )}
         </button>
       </div>
 

@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { socket } from '../../socket';
-import { Quiz, Question, AnswerOptionFull, QuestionType } from '../../types';
+import { Quiz, Question, AnswerOptionFull, QuestionType, SavedQuiz } from '../../types';
 import QuestionEditor from './QuestionEditor';
+import { QUIZ_STORAGE_KEY, getSavedQuizzes } from './QuizLibrary';
 
 interface Props {
   onCreated: (quiz: Quiz, code: string, qr: string) => void;
   onBack: () => void;
+  initialQuiz?: SavedQuiz;
 }
 
 const COLORS = ['#e21b3c','#1368ce','#d89e00','#26890c'];
@@ -36,13 +38,16 @@ function defaultQuestion(): Question & { _answers: AnswerOptionFull[]; _correctB
   };
 }
 
-export default function HostSetup({ onCreated, onBack }: Props) {
-  const [title, setTitle] = useState('');
-  const [questions, setQuestions] = useState<ReturnType<typeof defaultQuestion>[]>([defaultQuestion()]);
+export default function HostSetup({ onCreated, onBack, initialQuiz }: Props) {
+  const [title, setTitle] = useState(initialQuiz?.title ?? '');
+  const [questions, setQuestions] = useState<ReturnType<typeof defaultQuestion>[]>(
+    initialQuiz ? (initialQuiz.questions as ReturnType<typeof defaultQuestion>[]) : [defaultQuestion()]
+  );
   const [editingIdx, setEditingIdx] = useState<number | null>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [saveLabel, setSaveLabel] = useState<'idle' | 'saved'>('idle');
 
   const addQuestion = () => {
     const q = defaultQuestion();
@@ -112,12 +117,24 @@ export default function HostSetup({ onCreated, onBack }: Props) {
     return '';
   };
 
+  const handleSave = () => {
+    if (!title.trim()) { setError('Quiz title is required to save'); return; }
+    setError('');
+    const saved = getSavedQuizzes();
+    const id = initialQuiz?.id ?? makeId();
+    const entry: SavedQuiz = { id, title, questions, savedAt: new Date().toISOString() };
+    const idx = saved.findIndex(q => q.id === id);
+    if (idx >= 0) saved[idx] = entry; else saved.unshift(entry);
+    localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(saved));
+    setSaveLabel('saved');
+    setTimeout(() => setSaveLabel('idle'), 2000);
+  };
+
   const handleCreate = () => {
     const err = validate();
     if (err) { setError(err); return; }
     setError('');
     setLoading(true);
-
     const serverQuiz = buildServerQuiz();
 
     socket.emit('create-room', { quiz: serverQuiz }, (res: { ok: boolean; code?: string; qrCodeDataUrl?: string; error?: string }) => {
@@ -252,12 +269,19 @@ export default function HostSetup({ onCreated, onBack }: Props) {
         </div>
 
         {/* Create button */}
-        <div style={{ padding: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+        <div style={{ padding: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {error && (
-            <p style={{ color: '#ff8888', fontSize: '0.8rem', marginBottom: '0.5rem', fontWeight: 700 }}>
+            <p style={{ color: '#ff8888', fontSize: '0.8rem', marginBottom: '0', fontWeight: 700 }}>
               ⚠ {error}
             </p>
           )}
+          <button
+            className="btn btn-secondary"
+            style={{ width: '100%', borderRadius: '50px' }}
+            onClick={handleSave}
+          >
+            {saveLabel === 'saved' ? '✅ Saved!' : '💾 Save Quiz'}
+          </button>
           <button
             className="btn btn-primary"
             style={{ width: '100%', borderRadius: '50px' }}
