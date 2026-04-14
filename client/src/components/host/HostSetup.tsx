@@ -48,6 +48,7 @@ export default function HostSetup({ onCreated, onBack, initialQuiz }: Props) {
   const [error, setError] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [saveLabel, setSaveLabel] = useState<'idle' | 'saved'>('idle');
+  const [quizId] = useState<string>(() => initialQuiz?.id ?? makeId());
 
   const addQuestion = () => {
     const q = defaultQuestion();
@@ -121,9 +122,8 @@ export default function HostSetup({ onCreated, onBack, initialQuiz }: Props) {
     if (!title.trim()) { setError('Quiz title is required to save'); return; }
     setError('');
     const saved = getSavedQuizzes();
-    const id = initialQuiz?.id ?? makeId();
-    const entry: SavedQuiz = { id, title, questions, savedAt: new Date().toISOString() };
-    const idx = saved.findIndex(q => q.id === id);
+    const entry: SavedQuiz = { id: quizId, title, questions, savedAt: new Date().toISOString() };
+    const idx = saved.findIndex(q => q.id === quizId);
     if (idx >= 0) saved[idx] = entry; else saved.unshift(entry);
     localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(saved));
     setSaveLabel('saved');
