@@ -41,10 +41,17 @@ export default function HomePage({ onHost, onJoin, onLibrary }: Props) {
         >
           🎯 Join a Game
         </button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', opacity: 0.4 }}>
+          <hr style={{ flex: 1, border: 'none', borderTop: '1px solid rgba(255,255,255,0.4)' }} />
+          <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.05em' }}>OR</span>
+          <hr style={{ flex: 1, border: 'none', borderTop: '1px solid rgba(255,255,255,0.4)' }} />
+        </div>
+
         <button
-          className="btn btn-secondary"
+          className="btn btn-secondary btn-lg"
           onClick={onLibrary}
-          style={{ borderRadius: '50px', fontSize: '1rem', padding: '0.75rem 2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+          style={{ borderRadius: '50px', fontSize: '1.2rem', padding: '1.1rem 2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
         >
           📚 My Quizzes
           {savedCount > 0 && (

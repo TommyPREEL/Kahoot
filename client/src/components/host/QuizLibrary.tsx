@@ -118,7 +118,7 @@ export default function QuizLibrary({ onNew, onLoad, onBack }: Props) {
                 </div>
 
                 {/* Actions */}
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', alignItems: 'stretch' }}>
                   <button
                     className="btn btn-primary"
                     style={{ flex: 1, fontSize: '0.9rem' }}
@@ -130,14 +130,14 @@ export default function QuizLibrary({ onNew, onLoad, onBack }: Props) {
                   {confirmDelete === quiz.id ? (
                     <>
                       <button
-                        className="btn btn-secondary btn-sm"
+                        className="btn btn-secondary"
+                        style={{ fontSize: '0.85rem', padding: '0.5rem 0.75rem' }}
                         onClick={() => setConfirmDelete(null)}
                       >
                         Cancel
                       </button>
                       <button
-                        className="btn btn-sm"
-                        style={{ background: '#e21b3c', color: '#fff', border: 'none', borderRadius: '8px', padding: '0.4rem 0.75rem', fontFamily: 'var(--font)', fontWeight: 700, cursor: 'pointer' }}
+                        style={{ background: '#e21b3c', color: '#fff', border: 'none', borderRadius: '8px', padding: '0.5rem 0.75rem', fontFamily: 'var(--font)', fontWeight: 700, cursor: 'pointer', fontSize: '0.85rem' }}
                         onClick={() => handleDelete(quiz.id)}
                       >
                         Delete
@@ -145,7 +145,8 @@ export default function QuizLibrary({ onNew, onLoad, onBack }: Props) {
                     </>
                   ) : (
                     <button
-                      className="btn btn-secondary btn-sm"
+                      className="btn btn-secondary"
+                      style={{ padding: '0.5rem 0.75rem', fontSize: '1rem', lineHeight: 1 }}
                       title="Delete quiz"
                       onClick={() => setConfirmDelete(quiz.id)}
                     >
