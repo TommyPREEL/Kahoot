@@ -15,7 +15,7 @@ export default function HomePage({ onHost, onJoin, onLibrary }: Props) {
       <div className="animate-fadeInDown">
         <div style={{ fontSize: '4rem', marginBottom: '0.25rem' }}>🎮</div>
         <h1 style={{ letterSpacing: '-1px', color: '#fff' }}>
-          Kah<span style={{ color: '#ffd700' }}>OOT</span>!
+          Blitz<span style={{ color: '#ffd700' }}>Quiz</span>
         </h1>
         <p style={{ fontSize: '1.1rem', opacity: 0.75, marginTop: '0.25rem', fontWeight: 600 }}>
           Play live quizzes with friends

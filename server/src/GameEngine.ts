@@ -11,7 +11,7 @@ import { getPlayerStandings } from './RoomManager';
 const COUNTDOWN_SECONDS = 3;
 
 function calcPoints(timeTaken: number, timeLimit: number, maxPoints: number): number {
-  // Kahoot formula: full points if answered instantly, 50% at deadline
+  // BlitzQuiz formula: full points if answered instantly, 50% at deadline
   const ratio = Math.min(timeTaken / (timeLimit * 1000), 1);
   return Math.round(maxPoints * (1 - ratio * 0.5));
 }

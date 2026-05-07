@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { SavedQuiz } from '../../types';
 
-export const QUIZ_STORAGE_KEY = 'kahoot-saved-quizzes';
+export const QUIZ_STORAGE_KEY = 'blitzquiz-saved-quizzes';
 
 export function getSavedQuizzes(): SavedQuiz[] {
   try {

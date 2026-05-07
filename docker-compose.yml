@@ -1,7 +1,7 @@
 services:
-  kahoot-server:
-    container_name: kahoot-server
-    image: ${SERVER_IMAGE:-ghcr.io/tommypreel/kahoot-server:latest}
+  blitzquiz-server:
+    container_name: blitzquiz-server
+    image: ${SERVER_IMAGE:-ghcr.io/tommypreel/blitzquiz-server:latest}
     restart: always
     environment:
       - PORT=3650
@@ -10,14 +10,14 @@ services:
     networks:
       - web
 
-  kahoot-client:
-    container_name: kahoot-client
-    image: ${CLIENT_IMAGE:-ghcr.io/tommypreel/kahoot-client:latest}
+  blitzquiz-client:
+    container_name: blitzquiz-client
+    image: ${CLIENT_IMAGE:-ghcr.io/tommypreel/blitzquiz-client:latest}
     restart: always
     ports:
       - "3600:80"
     depends_on:
-      - kahoot-server
+      - blitzquiz-server
     networks:
       - web
 

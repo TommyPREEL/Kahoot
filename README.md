@@ -1,6 +1,6 @@
-# Kahoot Clone 🎮
+# BlitzQuiz 🎮
 
-A fully-featured, real-time quiz game inspired by Kahoot, built with React + TypeScript + Socket.IO.
+A fully-featured, real-time quiz game, built with React + TypeScript + Socket.IO.
 
 ## Features
 
@@ -60,7 +60,7 @@ This starts:
 ## Project Structure
 
 ```
-kahoot/
+blitzquiz/
 ├── server/          Node.js + Socket.IO backend
 │   └── src/
 │       ├── index.ts        Socket event handlers

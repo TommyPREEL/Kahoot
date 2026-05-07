@@ -197,5 +197,5 @@ io.on('connection', (socket) => {
 });
 
 httpServer.listen(PORT, () => {
-  console.log(`Kahoot server running on http://localhost:${PORT}`);
+  console.log(`BlitzQuiz server running on http://localhost:${PORT}`);
 });

@@ -54,7 +54,7 @@ export default function HostLobby({ roomCode, qrCode, players, onStart, onBack }
             </div>
           )}
           <p style={{ marginTop: '0.75rem', fontSize: '0.8rem', opacity: 0.6, fontWeight: 600, wordBreak: 'break-all' }}>
-            kahoot.local/join?code={roomCode}
+            blitzquiz.local/join?code={roomCode}
           </p>
         </div>
 
