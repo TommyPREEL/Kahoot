@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState } from "react";
 
 interface Props {
   seconds: number;
@@ -11,7 +11,10 @@ export default function TimerBar({ seconds, serverStartTime }: Props) {
   useEffect(() => {
     const update = () => {
       const elapsed = Date.now() - serverStartTime;
-      const remaining = Math.max(0, 1 - elapsed / (seconds * 1000));
+      const remaining = Math.min(
+        1,
+        Math.max(0, 1 - elapsed / (seconds * 1000)),
+      );
       setPct(remaining * 100);
     };
 
@@ -20,10 +23,7 @@ export default function TimerBar({ seconds, serverStartTime }: Props) {
     return () => clearInterval(id);
   }, [seconds, serverStartTime]);
 
-  const color =
-    pct > 60 ? '#26890c' :
-    pct > 30 ? '#d89e00' :
-    '#e21b3c';
+  const color = pct > 60 ? "#26890c" : pct > 30 ? "#d89e00" : "#e21b3c";
 
   return (
     <div className="timer-bar-wrap">

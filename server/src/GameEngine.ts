@@ -54,9 +54,8 @@ export function startGame(io: Server, room: Room): void {
 
   io.to(room.code).emit('game-starting', { countdown: COUNTDOWN_SECONDS });
 
-  setTimeout(() => {
-    startQuestion(io, room);
-  }, COUNTDOWN_SECONDS * 1000);
+  // startQuestion manages its own countdown offset; no duplicate delay here
+  startQuestion(io, room);
 }
 
 export function startQuestion(io: Server, room: Room): void {
@@ -65,7 +64,9 @@ export function startQuestion(io: Server, room: Room): void {
 
   room.state = 'question-active';
   room.answeredCount = 0;
-  room.questionStartTime = Date.now();
+  // Set start time in the future so the client-side countdown doesn't eat into
+  // answering time. Both the timer bar and scoring use this reference.
+  room.questionStartTime = Date.now() + COUNTDOWN_SECONDS * 1000;
 
   // Send question without correct answer info
   const payload: QuestionStartPayload = {
@@ -80,10 +81,10 @@ export function startQuestion(io: Server, room: Room): void {
 
   io.to(room.code).emit('question-start', payload);
 
-  // Server-side timer
+  // Server-side timer: includes countdown so it ends after the full answering window
   room.questionTimer = setTimeout(() => {
     endQuestion(io, room);
-  }, question.timeLimit * 1000);
+  }, (question.timeLimit + COUNTDOWN_SECONDS) * 1000);
 }
 
 export function handleAnswer(
@@ -93,13 +94,15 @@ export function handleAnswer(
   answer: string | string[] | number
 ): void {
   if (room.state !== 'question-active') return;
+  // Reject answers submitted before the countdown ends
+  if (Date.now() < room.questionStartTime) return;
 
   const qIdx = room.currentQuestionIndex;
   // Prevent double-answering
   if (player.answers.some(a => a.questionIndex === qIdx)) return;
 
   const question = room.quiz.questions[qIdx];
-  const timeTaken = Date.now() - room.questionStartTime;
+  const timeTaken = Math.max(0, Date.now() - room.questionStartTime);
   const correct = isAnswerCorrect(room, answer);
   const points = correct ? calcPoints(timeTaken, question.timeLimit, question.maxPoints) : 0;
 
@@ -182,6 +185,14 @@ export function endQuestion(io: Server, room: Room): void {
     correctAnswer,
     answerBreakdown,
     players: standings,
+    ...(question.type === 'slider' ? {
+      sliderMeta: {
+        min: question.sliderMin ?? 0,
+        max: question.sliderMax ?? 100,
+        correct: question.sliderCorrect ?? 0,
+        tolerance: question.sliderTolerance ?? 0,
+      },
+    } : {}),
   };
 
   // Send personalized result to each player

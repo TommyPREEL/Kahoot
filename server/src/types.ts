@@ -82,6 +82,7 @@ export interface QuestionResultsPayload {
   answerBreakdown: { answerId: string; count: number; text: string }[];
   players: PlayerStanding[];
   yourAnswer?: PlayerAnswer;
+  sliderMeta?: { min: number; max: number; correct: number; tolerance: number };
 }
 
 export interface PlayerStanding {
