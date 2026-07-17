@@ -115,6 +115,145 @@ io.on('connection', (socket) => {
     console.log(`[Room] ${trimmedNick} joined ${room.code}`);
   });
 
+  // ── Player reconnects to a room ──────────────────────────────────────────
+  socket.on('reconnect-to-room', (data: { code: string; nickname: string }, callback: Function) => {
+    const room = getRoom(data.code.toUpperCase().trim());
+
+    if (!room) {
+      return callback({ ok: false, error: 'Room not found' });
+    }
+
+    const trimmedNick = data.nickname.trim();
+    if (!trimmedNick) {
+      return callback({ ok: false, error: 'Nickname required' });
+    }
+
+    // Find existing player by nickname
+    let existingPlayer: Player | null = null;
+    let oldSocketId: string | null = null;
+
+    for (const [id, p] of room.players.entries()) {
+      if (p.nickname.toLowerCase() === trimmedNick.toLowerCase()) {
+        existingPlayer = p;
+        oldSocketId = id;
+        break;
+      }
+    }
+
+    if (!existingPlayer) {
+      return callback({ ok: false, error: 'Player not found in this room' });
+    }
+
+    // Update socket ID and reconnect status
+    if (oldSocketId && oldSocketId !== socket.id) {
+      room.players.delete(oldSocketId);
+    }
+
+    existingPlayer.id = socket.id;
+    existingPlayer.connected = true;
+    room.players.set(socket.id, existingPlayer);
+    socket.join(room.code);
+
+    // Send current game state to reconnecting player
+    const gameState = {
+      roomCode: room.code,
+      nickname: trimmedNick,
+      state: room.state,
+      currentQuestionIndex: room.currentQuestionIndex,
+      totalQuestions: room.quiz.questions.length,
+      score: existingPlayer.score,
+      streak: existingPlayer.streak,
+    };
+
+    callback({ ok: true, ...gameState });
+
+    // Notify host of reconnection
+    io.to(room.hostId).emit('player-reconnected', {
+      id: socket.id,
+      nickname: trimmedNick,
+      playerCount: Array.from(room.players.values()).filter(p => p.connected).length,
+    });
+
+    // If game is active, send current question or results
+    if (room.state === 'question-active') {
+      const question = room.quiz.questions[room.currentQuestionIndex];
+      const payload = {
+        questionIndex: room.currentQuestionIndex,
+        totalQuestions: room.quiz.questions.length,
+        serverTime: room.questionStartTime,
+        question: {
+          ...question,
+          answers: question.answers?.map(({ id, text }) => ({ id, text })),
+        },
+      };
+      socket.emit('question-start', payload);
+    } else if (room.state === 'question-results') {
+      const question = room.quiz.questions[room.currentQuestionIndex];
+      const standings = Array.from(room.players.values())
+        .filter(p => p.connected || p.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map((p, i) => ({
+          nickname: p.nickname,
+          score: p.score,
+          rank: i + 1,
+          lastPoints: p.lastAnswer?.points ?? 0,
+          streak: p.streak,
+        }));
+
+      const answerBreakdown = (question.answers ?? []).map(a => ({
+        answerId: a.id,
+        text: a.text,
+        count: Array.from(room.players.values()).filter(p => {
+          const pa = p.answers.find(ans => ans.questionIndex === room.currentQuestionIndex);
+          if (!pa) return false;
+          if (Array.isArray(pa.answer)) return pa.answer.includes(a.id);
+          return pa.answer === a.id;
+        }).length,
+      }));
+
+      let correctAnswer: string | string[] | number | boolean;
+      if (question.type === 'quiz' || question.type === 'true-false') {
+        correctAnswer = question.answers?.find(a => a.isCorrect)?.id ?? '';
+      } else if (question.type === 'multi-select') {
+        correctAnswer = question.answers?.filter(a => a.isCorrect).map(a => a.id) ?? [];
+      } else {
+        correctAnswer = question.sliderCorrect ?? 0;
+      }
+
+      const resultsPayload = {
+        questionIndex: room.currentQuestionIndex,
+        correctAnswer,
+        answerBreakdown,
+        players: standings,
+        yourAnswer: existingPlayer.answers.find(a => a.questionIndex === room.currentQuestionIndex),
+        ...(question.type === 'slider' ? {
+          sliderMeta: {
+            min: question.sliderMin ?? 0,
+            max: question.sliderMax ?? 100,
+            correct: question.sliderCorrect ?? 0,
+            tolerance: question.sliderTolerance ?? 0,
+          },
+        } : {}),
+      };
+
+      socket.emit('question-results', resultsPayload);
+    } else if (room.state === 'final-results') {
+      const standings = Array.from(room.players.values())
+        .filter(p => p.connected || p.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map((p, i) => ({
+          nickname: p.nickname,
+          score: p.score,
+          rank: i + 1,
+          lastPoints: p.lastAnswer?.points ?? 0,
+          streak: p.streak,
+        }));
+      socket.emit('game-end', { players: standings });
+    }
+
+    console.log(`[Room] ${trimmedNick} reconnected to ${room.code}`);
+  });
+
   // ── Host starts game ─────────────────────────────────────────────────────
   socket.on('start-game', (data: { code: string }, callback: Function) => {
     const room = getRoom(data.code);
@@ -186,11 +325,27 @@ io.on('connection', (socket) => {
       const player = playerRoom.players.get(socket.id);
       if (player) {
         player.connected = false;
-        io.to(playerRoom.hostId).emit('player-left', {
+        io.to(playerRoom.hostId).emit('player-disconnected', {
           id: socket.id,
           nickname: player.nickname,
           playerCount: Array.from(playerRoom.players.values()).filter(p => p.connected).length,
         });
+        console.log(`[Room] ${player.nickname} disconnected from ${playerRoom.code}`);
+        
+        // Clean up disconnected players in lobby after 60 seconds
+        if (playerRoom.state === 'lobby') {
+          setTimeout(() => {
+            const room = getRoom(playerRoom.code);
+            if (room && !player.connected) {
+              room.players.delete(socket.id);
+              io.to(room.hostId).emit('player-left', {
+                id: socket.id,
+                nickname: player.nickname,
+                playerCount: room.players.size,
+              });
+            }
+          }, 60000);
+        }
       }
     }
   });
