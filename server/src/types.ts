@@ -44,6 +44,8 @@ export interface Player {
   lastAnswer?: PlayerAnswer;
   answers: PlayerAnswer[];
   connected: boolean;
+  /** Secret returned on join; required to reclaim this player after a reconnect. */
+  token: string;
 }
 
 export type RoomState =
@@ -64,6 +66,14 @@ export interface Room {
   questionTimer: ReturnType<typeof setTimeout> | null;
   answeredCount: number;
   qrCodeDataUrl: string;
+  /** Secret returned on room creation; required to reclaim the host role. */
+  hostToken: string;
+  hostConnected: boolean;
+  /** Paused rooms freeze the question timer and reject answers. */
+  paused: boolean;
+  pausedAt: number;
+  /** Deletes the room if the host does not come back in time. */
+  hostGraceTimer: ReturnType<typeof setTimeout> | null;
 }
 
 // Events sent from server to client
@@ -78,6 +88,7 @@ export interface QuestionStartPayload {
 
 export interface QuestionResultsPayload {
   questionIndex: number;
+  questionText: string;
   correctAnswer: string | string[] | number | boolean;
   answerBreakdown: { answerId: string; count: number; text: string }[];
   players: PlayerStanding[];

@@ -1,3 +1,4 @@
+import { randomInt, randomUUID } from 'crypto';
 import { Room, Quiz, Player } from './types';
 
 const rooms = new Map<string, Room>();
@@ -6,7 +7,7 @@ function generateCode(length = 6): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no confusing chars
   let code = '';
   for (let i = 0; i < length; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
+    code += chars[randomInt(chars.length)];
   }
   return code;
 }
@@ -28,6 +29,11 @@ export function createRoom(hostId: string, quiz: Quiz, qrCodeDataUrl: string): R
     questionTimer: null,
     answeredCount: 0,
     qrCodeDataUrl,
+    hostToken: randomUUID(),
+    hostConnected: true,
+    paused: false,
+    pausedAt: 0,
+    hostGraceTimer: null,
   };
 
   rooms.set(code, room);
@@ -41,11 +47,23 @@ export function getRoom(code: string): Room | undefined {
 export function deleteRoom(code: string): void {
   const room = rooms.get(code);
   if (room?.questionTimer) clearTimeout(room.questionTimer);
+  if (room?.hostGraceTimer) clearTimeout(room.hostGraceTimer);
   rooms.delete(code);
 }
 
 export function addPlayer(room: Room, player: Player): void {
   room.players.set(player.id, player);
+}
+
+export function connectedCount(room: Room): number {
+  let n = 0;
+  for (const p of room.players.values()) if (p.connected) n++;
+  return n;
+}
+
+export function findPlayerByToken(room: Room, token: string): Player | undefined {
+  for (const p of room.players.values()) if (p.token === token) return p;
+  return undefined;
 }
 
 export function removePlayer(room: Room, playerId: string): void {

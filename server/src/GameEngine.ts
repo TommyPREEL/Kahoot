@@ -6,7 +6,7 @@ import {
   QuestionStartPayload,
   QuestionResultsPayload,
 } from './types';
-import { getPlayerStandings } from './RoomManager';
+import { getPlayerStandings, connectedCount } from './RoomManager';
 
 const COUNTDOWN_SECONDS = 3;
 
@@ -69,7 +69,54 @@ export function startQuestion(io: Server, room: Room): void {
   room.questionStartTime = Date.now() + COUNTDOWN_SECONDS * 1000;
 
   // Send question without correct answer info
-  const payload: QuestionStartPayload = {
+  io.to(room.code).emit('question-start', questionStartPayload(room));
+
+  armQuestionTimer(io, room);
+}
+
+/** Schedules the end of the current question based on questionStartTime. */
+function armQuestionTimer(io: Server, room: Room): void {
+  const question = room.quiz.questions[room.currentQuestionIndex];
+  if (room.questionTimer) clearTimeout(room.questionTimer);
+  const endsAt = room.questionStartTime + question.timeLimit * 1000;
+  room.questionTimer = setTimeout(() => endQuestion(io, room), Math.max(0, endsAt - Date.now()));
+}
+
+/** Freezes the game: the question timer stops and answers are rejected. */
+export function pauseGame(io: Server, room: Room, reason: 'host' | 'host-disconnected'): void {
+  if (room.paused) return;
+  room.paused = true;
+  room.pausedAt = Date.now();
+  if (room.questionTimer) {
+    clearTimeout(room.questionTimer);
+    room.questionTimer = null;
+  }
+  io.to(room.code).emit('game-paused', { reason });
+}
+
+/** Unfreezes the game, shifting the question start so no answering time is lost. */
+export function resumeGame(io: Server, room: Room): void {
+  if (!room.paused) return;
+  room.paused = false;
+  if (room.state === 'question-active' || room.state === 'starting') {
+    room.questionStartTime += Date.now() - room.pausedAt;
+    armQuestionTimer(io, room);
+  }
+  io.to(room.code).emit('game-resumed', { serverTime: room.questionStartTime });
+}
+
+/** Ends the question early once every connected player has answered. */
+export function checkAllAnswered(io: Server, room: Room): void {
+  if (room.state !== 'question-active' || room.paused) return;
+  const pending = Array.from(room.players.values()).some(
+    p => p.connected && !p.answers.some(a => a.questionIndex === room.currentQuestionIndex),
+  );
+  if (!pending) endQuestion(io, room);
+}
+
+export function questionStartPayload(room: Room): QuestionStartPayload {
+  const question = room.quiz.questions[room.currentQuestionIndex];
+  return {
     questionIndex: room.currentQuestionIndex,
     totalQuestions: room.quiz.questions.length,
     serverTime: room.questionStartTime,
@@ -78,28 +125,26 @@ export function startQuestion(io: Server, room: Room): void {
       answers: question.answers?.map(({ id, text }) => ({ id, text })),
     },
   };
-
-  io.to(room.code).emit('question-start', payload);
-
-  // Server-side timer: includes countdown so it ends after the full answering window
-  room.questionTimer = setTimeout(() => {
-    endQuestion(io, room);
-  }, (question.timeLimit + COUNTDOWN_SECONDS) * 1000);
 }
+
+/**
+ * ok: recorded (or already recorded) · retry: send it again later (paused, countdown not over)
+ * · closed: this question is over, drop the answer.
+ */
+export type AnswerStatus = 'ok' | 'retry' | 'closed';
 
 export function handleAnswer(
   io: Server,
   room: Room,
   player: Player,
+  questionIndex: number,
   answer: string | string[] | number
-): void {
-  if (room.state !== 'question-active') return;
-  // Reject answers submitted before the countdown ends
-  if (Date.now() < room.questionStartTime) return;
-
+): AnswerStatus {
+  // Already recorded (a resend after a reconnect): confirm it, even if the question has ended since.
+  if (player.answers.some(a => a.questionIndex === questionIndex)) return 'ok';
   const qIdx = room.currentQuestionIndex;
-  // Prevent double-answering
-  if (player.answers.some(a => a.questionIndex === qIdx)) return;
+  if (questionIndex !== qIdx || room.state !== 'question-active') return 'closed';
+  if (room.paused || Date.now() < room.questionStartTime) return 'retry';
 
   const question = room.quiz.questions[qIdx];
   const timeTaken = Math.max(0, Date.now() - room.questionStartTime);
@@ -130,19 +175,12 @@ export function handleAnswer(
   // Notify host that someone answered (without revealing who picked what)
   io.to(room.hostId).emit('player-answered', {
     answeredCount: room.answeredCount,
-    totalPlayers: room.players.size,
+    totalPlayers: connectedCount(room),
     nickname: player.nickname,
   });
 
-  // Check if all players answered
-  const activePlayers = Array.from(room.players.values()).filter(p => p.connected);
-  if (room.answeredCount >= activePlayers.length) {
-    if (room.questionTimer) {
-      clearTimeout(room.questionTimer);
-      room.questionTimer = null;
-    }
-    endQuestion(io, room);
-  }
+  checkAllAnswered(io, room);
+  return 'ok';
 }
 
 export function endQuestion(io: Server, room: Room): void {
@@ -155,6 +193,22 @@ export function endQuestion(io: Server, room: Room): void {
     room.questionTimer = null;
   }
 
+  const resultsPayload = questionResultsPayload(room);
+
+  // Send personalized result to each player
+  for (const player of room.players.values()) {
+    const personalizedPayload = {
+      ...resultsPayload,
+      yourAnswer: player.answers.find(a => a.questionIndex === room.currentQuestionIndex),
+    };
+    io.to(player.id).emit('question-results', personalizedPayload);
+  }
+
+  // Send to host (no personalization needed)
+  io.to(room.hostId).emit('question-results', resultsPayload);
+}
+
+export function questionResultsPayload(room: Room): QuestionResultsPayload {
   const question = room.quiz.questions[room.currentQuestionIndex];
   const standings = getPlayerStandings(room);
 
@@ -180,8 +234,9 @@ export function endQuestion(io: Server, room: Room): void {
     correctAnswer = question.sliderCorrect ?? 0;
   }
 
-  const resultsPayload: QuestionResultsPayload = {
+  return {
     questionIndex: room.currentQuestionIndex,
+    questionText: question.text,
     correctAnswer,
     answerBreakdown,
     players: standings,
@@ -194,18 +249,6 @@ export function endQuestion(io: Server, room: Room): void {
       },
     } : {}),
   };
-
-  // Send personalized result to each player
-  for (const player of room.players.values()) {
-    const personalizedPayload = {
-      ...resultsPayload,
-      yourAnswer: player.answers.find(a => a.questionIndex === room.currentQuestionIndex),
-    };
-    io.to(player.id).emit('question-results', personalizedPayload);
-  }
-
-  // Send to host (no personalization needed)
-  io.to(room.hostId).emit('question-results', resultsPayload);
 }
 
 export function nextQuestion(io: Server, room: Room): void {
