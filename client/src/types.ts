@@ -66,6 +66,7 @@ export interface QuestionStartPayload {
 
 export interface QuestionResultsPayload {
   questionIndex: number;
+  questionText: string;
   correctAnswer: string | string[] | number | boolean;
   answerBreakdown: { answerId: string; count: number; text: string }[];
   players: PlayerStanding[];

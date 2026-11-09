@@ -1,51 +1,63 @@
 import { io, Socket } from 'socket.io-client';
 
-const SERVER_URL =
-  import.meta.env.VITE_SERVER_URL ?? 'http://localhost:3650';
+// No URL = same origin: Vite (dev) and nginx (prod) both proxy /socket.io to the server,
+// so phones on the LAN reach it through whatever address they opened the page with.
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || undefined;
 
+// Keep retrying: phones drop the socket whenever the screen locks, and the
+// session token lets us reclaim our place once we're back.
 export const socket: Socket = io(SERVER_URL, {
   autoConnect: true,
-  reconnectionAttempts: 10,
+  reconnectionAttempts: Infinity,
   reconnectionDelay: 1000,
   reconnectionDelayMax: 5000,
   timeout: 20000,
 });
 
-// Session management helpers
-export const SESSION_STORAGE_KEY = 'blitzquiz_session';
+export type CreatedRoom = { code: string; qrCodeDataUrl: string; hostToken: string };
 
-export interface SessionData {
-  roomCode: string;
-  nickname: string;
-  isPlayer: boolean;
-  timestamp: number;
+/** Asks the server to open a room for this quiz. Rejects with the server's message. */
+export function createRoom(quiz: unknown): Promise<CreatedRoom> {
+  return new Promise((resolve, reject) => {
+    socket.timeout(10000).emit(
+      'create-room',
+      { quiz },
+      (err: Error | null, res: { ok: boolean; error?: string } & Partial<CreatedRoom>) => {
+        if (err) return reject(new Error('The server did not answer. Check your connection.'));
+        if (!res.ok || !res.code || !res.hostToken) return reject(new Error(res.error ?? 'Could not create the room.'));
+        resolve({ code: res.code, qrCodeDataUrl: res.qrCodeDataUrl ?? '', hostToken: res.hostToken });
+      },
+    );
+  });
 }
 
-export function saveSession(data: Omit<SessionData, 'timestamp'>): void {
-  const session: SessionData = {
-    ...data,
-    timestamp: Date.now(),
-  };
-  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+// ── Answers survive a dropped connection ─────────────────────────────────
+// The answer stays pending until the server confirms it ('ok') or says the
+// question is over ('closed'). 'retry' (paused, or not back in the room yet)
+// and timeouts are retried; after a reconnect App calls resendPendingAnswer().
+type Pending = { questionIndex: number; answer: string | string[] | number };
+let pending: Pending | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function submitAnswer(questionIndex: number, answer: Pending['answer']): void {
+  pending = { questionIndex, answer };
+  sendPending();
 }
 
-export function getSession(): SessionData | null {
-  const stored = localStorage.getItem(SESSION_STORAGE_KEY);
-  if (!stored) return null;
-  
-  try {
-    const session: SessionData = JSON.parse(stored);
-    // Session expires after 2 hours
-    if (Date.now() - session.timestamp > 2 * 60 * 60 * 1000) {
-      clearSession();
-      return null;
+export function resendPendingAnswer(): void {
+  sendPending();
+}
+
+function sendPending(): void {
+  clearTimeout(retryTimer);
+  const p = pending;
+  if (!p || !socket.connected) return; // resent by App once the session is restored
+  socket.timeout(4000).emit('submit-answer', p, (err: Error | null, res?: { status: 'ok' | 'retry' | 'closed' }) => {
+    if (pending !== p) return;
+    if (!err && (res?.status === 'ok' || res?.status === 'closed')) {
+      pending = null;
+      return;
     }
-    return session;
-  } catch {
-    return null;
-  }
-}
-
-export function clearSession(): void {
-  localStorage.removeItem(SESSION_STORAGE_KEY);
+    retryTimer = setTimeout(sendPending, 2000);
+  });
 }

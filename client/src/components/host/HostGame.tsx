@@ -1,26 +1,27 @@
+import QuestionRecap from '../shared/QuestionRecap';
 import { useEffect, useState } from 'react';
 import { QuestionStartPayload, QuestionResultsPayload } from '../../types';
 import TimerBar from '../shared/TimerBar';
 import MiniPodium from '../shared/MiniPodium';
 import Countdown from '../shared/Countdown';
+import Icon from '../shared/Icon';
 
 interface Props {
   roomCode: string;
   question: QuestionStartPayload | null;
   results: QuestionResultsPayload | null;
-  players: { id: string; nickname: string }[];
+  players: { id: string; nickname: string; connected?: boolean }[];
   answeredCount: number;
   totalPlayers: number;
   totalQuestions: number;
   onNext: () => void;
+  onPause: () => void;
 }
 
-const COLORS = ['#e21b3c','#1368ce','#d89e00','#26890c'];
-const SHAPES = ['▲','◆','●','■'];
 
 export default function HostGame({
   roomCode, question, results, players, answeredCount, totalPlayers,
-  totalQuestions, onNext,
+  totalQuestions, onNext, onPause,
 }: Props) {
   const [showCountdown, setShowCountdown] = useState(false);
   const [timerKey, setTimerKey] = useState(0);
@@ -39,58 +40,50 @@ export default function HostGame({
   // Always emit next-question; server decides to end game or load next question.
   // The game-end socket event (in App.tsx) handles the final podium for all.
   const handleNext = () => onNext();
+  const offline = players.filter(p => p.connected === false);
 
   if (!question) {
     return (
-      <div className="page center" style={{ flexDirection: 'column', gap: '1rem' }}>
-        <div style={{ fontSize: '3rem', animation: 'spin 1s linear infinite' }}>⏳</div>
-        <p style={{ fontWeight: 700, opacity: 0.7 }}>Waiting for the first question…</p>
+      <div className="page center page-col">
+        <p className="muted animate-pulse">Waiting for the first question…</p>
       </div>
     );
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div className="host-screen">
       {showCountdown && <Countdown from={3} />}
 
-      {/* Top bar */}
-      <div
-        className="host-topbar"
-        style={{
-          background: 'rgba(0,0,0,0.3)',
-          padding: '0.75rem 1rem',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          borderBottom: '1px solid rgba(255,255,255,0.1)',
-          flexWrap: 'wrap',
-          gap: '0.25rem',
-        }}
-      >
-        <div style={{ fontWeight: 800, fontSize: 'clamp(0.7rem, 2vw, 0.9rem)', opacity: 0.7 }}>
-          Room: <span style={{ color: '#ffd700' }}>{roomCode}</span>
+      <div className="host-topbar">
+        <div className="muted">
+          Room <span className="text-accent">{roomCode}</span>
         </div>
-        <div style={{ fontWeight: 800, fontSize: 'clamp(0.8rem, 2.5vw, 1rem)', textAlign: 'center' }}>
+        <div style={{ fontWeight: 800 }}>
           Q{question.questionIndex + 1} / {question.totalQuestions}
         </div>
-        <div style={{ fontWeight: 800, fontSize: 'clamp(0.7rem, 2vw, 0.9rem)', opacity: 0.7 }}>
-          {answeredCount} / {totalPlayers} answered
+        <div className="row" style={{ gap: 'var(--s-3)' }}>
+          {offline.length > 0 && (
+            <span className="offline-pill" title={offline.map(p => p.nickname).join(', ')}>
+              <Icon name="wifiOff" />
+              {offline.length <= 2
+                ? `${offline.map(p => p.nickname).join(', ')} offline`
+                : `${offline.length} players offline`}
+            </span>
+          )}
+          <span className="muted">{answeredCount} / {totalPlayers} answered</span>
+          <button className="btn btn-secondary btn-sm" onClick={onPause}>
+            <Icon name="pause" /> Pause
+          </button>
         </div>
       </div>
 
-      {/* Question + timer */}
       {!results && (
         <>
-          <div
-            className="animate-fadeInDown"
-            style={{ padding: '1.5rem 1rem 0.75rem', textAlign: 'center' }}
-          >
-            <h2 style={{ fontSize: 'clamp(1.2rem, 4vw, 2.4rem)', maxWidth: '800px', margin: '0 auto' }}>
-              {question.question.text}
-            </h2>
+          <div className="animate-fadeInDown host-question">
+            <h2>{question.question.text}</h2>
           </div>
 
-          <div style={{ padding: '0 1rem 0.75rem' }}>
+          <div className="host-pad">
             <TimerBar
               key={timerKey}
               seconds={question.question.timeLimit}
@@ -98,37 +91,15 @@ export default function HostGame({
             />
           </div>
 
-          {/* Answer grid (host view, no interaction) */}
           {question.question.answers && (
-            <div
-              className="host-answer-grid"
-              style={{
-                flex: 1,
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '0.75rem',
-                padding: '0 1rem 1rem',
-              }}
-            >
+            <div className="host-grid host-answer-grid">
               {question.question.answers.map((ans, i) => (
                 <div
                   key={ans.id}
-                  className="animate-bounceIn"
-                  style={{
-                    animationDelay: `${i * 0.1 + 0.5}s`,
-                    background: COLORS[i % 4],
-                    borderRadius: '12px',
-                    padding: '1.25rem',
-                    fontWeight: 800,
-                    fontSize: '1.1rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.75rem',
-                    opacity: showCountdown ? 0 : 1,
-                    transition: 'opacity 0.3s',
-                  }}
+                  className={`host-answer ans-${i % 4} animate-bounceIn`}
+                  style={{ animationDelay: `${i * 0.1 + 0.5}s`, opacity: showCountdown ? 0 : 1 }}
                 >
-                  <span style={{ fontSize: '1.5rem' }}>{SHAPES[i % 4]}</span>
+                  <span className={`shape-icon shape-${i % 4}`} aria-hidden="true" />
                   {ans.text}
                 </div>
               ))}
@@ -136,8 +107,8 @@ export default function HostGame({
           )}
 
           {question.question.type === 'slider' && (
-            <div style={{ padding: '1rem 1.5rem 2rem', textAlign: 'center' }}>
-              <p style={{ opacity: 0.7, fontWeight: 700, marginBottom: '1rem' }}>
+            <div className="host-pad text-center" style={{ paddingTop: 'var(--s-4)', paddingBottom: 'var(--s-6)' }}>
+              <p className="muted" style={{ marginBottom: 'var(--s-4)' }}>
                 Players are choosing a value between {question.question.sliderMin} and {question.question.sliderMax}
               </p>
               <input
@@ -145,68 +116,44 @@ export default function HostGame({
                 min={question.question.sliderMin}
                 max={question.question.sliderMax}
                 defaultValue={((question.question.sliderMin ?? 0) + (question.question.sliderMax ?? 100)) / 2}
-                style={{ width: '100%', accentColor: '#ffd700' }}
+                style={{ width: '100%', accentColor: 'var(--accent)' }}
                 readOnly
               />
             </div>
           )}
 
           {question.question.type === 'true-false' && (
-            <div className="host-tf-grid" style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', padding: '1rem 1rem 2rem' }}>
+            <div className="host-grid host-tf-grid">
               {[
-                { label: '✅ True', color: '#26890c' },
-                { label: '❌ False', color: '#e21b3c' },
+                { label: 'True', cls: 'ans-3', icon: 'check' as const },
+                { label: 'False', cls: 'ans-0', icon: 'x' as const },
               ].map(opt => (
-                <div
-                  key={opt.label}
-                  style={{
-                    background: opt.color,
-                    borderRadius: '12px',
-                    padding: '1.5rem 1rem',
-                    fontWeight: 900,
-                    fontSize: 'clamp(1rem, 3vw, 1.4rem)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  {opt.label}
+                <div key={opt.label} className={`host-answer host-tf ${opt.cls}`}>
+                  <Icon name={opt.icon} /> {opt.label}
                 </div>
               ))}
             </div>
           )}
 
-          {/* Answered progress */}
-          <div style={{ padding: '0 1rem 1.5rem', textAlign: 'center' }}>
-            <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+          <div className="host-pad text-center" style={{ paddingBottom: 'var(--s-5)' }}>
+            <div className="answered-dots">
               {Array.from({ length: totalPlayers }).map((_, i) => (
-                <div
-                  key={i}
-                  style={{
-                    width: '16px',
-                    height: '16px',
-                    borderRadius: '50%',
-                    background: i < answeredCount ? '#ffd700' : 'rgba(255,255,255,0.2)',
-                    transition: 'background 0.3s',
-                  }}
-                />
+                <div key={i} className={`answered-dot${i < answeredCount ? ' is-on' : ''}`} />
               ))}
             </div>
-            <p style={{ opacity: 0.6, fontWeight: 700, fontSize: '0.85rem' }}>
+            <p className="muted" style={{ fontSize: '0.85rem' }}>
               {answeredCount}/{totalPlayers} answered
             </p>
           </div>
         </>
       )}
 
-      {/* Results view */}
       {results && (
-        <div className="animate-fadeInUp" style={{ flex: 1, padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1.5rem', overflow: 'auto' }}>
-          <h2 style={{ textAlign: 'center' }}>Results 📊</h2>
+        <div className="animate-fadeInUp host-results stack" style={{ gap: 'var(--s-5)' }}>
+          <QuestionRecap results={results} large />
 
-          {/* Answer breakdown */}
           {results.answerBreakdown.length > 0 && (
-            <div className="host-results-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+            <div className="host-grid host-results-grid" style={{ padding: 0 }}>
               {results.answerBreakdown.map((ans, i) => {
                 const isCorrect = Array.isArray(results.correctAnswer)
                   ? results.correctAnswer.includes(ans.answerId)
@@ -215,68 +162,37 @@ export default function HostGame({
                 return (
                   <div
                     key={ans.answerId}
-                    style={{
-                      background: COLORS[i % 4],
-                      borderRadius: '12px',
-                      padding: '1rem',
-                      border: isCorrect ? '3px solid #ffd700' : '3px solid transparent',
-                      position: 'relative',
-                      overflow: 'hidden',
-                    }}
+                    className={`result-tile ans-${i % 4}${isCorrect ? ' is-correct' : ''}`}
                   >
-                    {/* Fill bar */}
                     <div
-                      style={{
-                        position: 'absolute',
-                        bottom: 0,
-                        left: 0,
-                        width: `${(ans.count / maxCount) * 100}%`,
-                        height: '4px',
-                        background: 'rgba(255,255,255,0.6)',
-                        transition: 'width 1s ease',
-                      }}
+                      className="result-bar"
+                      style={{ width: `${(ans.count / maxCount) * 100}%` }}
                     />
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        {SHAPES[i % 4]} {ans.text}
+                    <div className="row-between">
+                      <span className="row" style={{ fontWeight: 800 }}>
+                        <span className={`shape-icon shape-${i % 4}`} aria-hidden="true" /> {ans.text}
                       </span>
-                      {isCorrect && <span style={{ fontSize: '1.2rem' }}>✓</span>}
+                      {isCorrect && <Icon name="check" />}
                     </div>
-                    <div style={{ fontWeight: 900, fontSize: '1.4rem', marginTop: '0.25rem' }}>
-                      {ans.count}
-                    </div>
+                    <div className="result-count">{ans.count}</div>
                   </div>
                 );
               })}
             </div>
           )}
 
-          {/* Mini podium */}
           <div style={{ flex: 1 }}>
-            <h3 style={{ textAlign: 'center', marginBottom: '1rem', opacity: 0.8 }}>Top Players</h3>
+            <h3 className="text-center muted" style={{ marginBottom: 'var(--s-4)' }}>Top players</h3>
             <MiniPodium players={results.players.slice(0, 5)} />
           </div>
 
-          {/* Next button */}
-          <div style={{ textAlign: 'center', padding: '0 0 1rem' }}>
-            <button
-              className="btn btn-primary btn-lg animate-pulse"
-              onClick={handleNext}
-              style={{ borderRadius: '50px', minWidth: '180px', width: '100%', maxWidth: '280px' }}
-            >
-              {isLast ? '🏆 Show Final Podium' : '▶ Next Question'}
+          <div className="text-center" style={{ paddingBottom: 'var(--s-4)' }}>
+            <button className="btn btn-primary btn-lg w-action" onClick={handleNext}>
+              {isLast ? 'Show final podium' : 'Next question'}
             </button>
           </div>
         </div>
       )}
-
-      <style>{`
-        @media (max-width: 500px) {
-          .host-answer-grid { grid-template-columns: 1fr !important; }
-          .host-results-grid { grid-template-columns: 1fr !important; }
-          .host-tf-grid { grid-template-columns: 1fr !important; }
-        }
-      `}</style>
     </div>
   );
 }

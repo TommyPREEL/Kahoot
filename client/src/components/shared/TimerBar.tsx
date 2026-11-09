@@ -23,7 +23,7 @@ export default function TimerBar({ seconds, serverStartTime }: Props) {
     return () => clearInterval(id);
   }, [seconds, serverStartTime]);
 
-  const color = pct > 60 ? "#26890c" : pct > 30 ? "#d89e00" : "#e21b3c";
+  const color = pct > 60 ? "var(--ans-3)" : pct > 30 ? "var(--ans-2)" : "var(--ans-0)";
 
   return (
     <div className="timer-bar-wrap">

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-const COLORS = ['#e21b3c','#1368ce','#d89e00','#26890c','#ff6b6b','#ffd700','#9b59b6','#00bcd4'];
+const COLORS = ['#ef6a3c','#2f6fe0','#f2b01e','#22b58a','#ffd23f','#fbf7ff'];
 
 interface Particle {
   x: number;
@@ -21,6 +21,7 @@ export default function Confetti() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;

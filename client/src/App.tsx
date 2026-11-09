@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { socket, saveSession, getSession, clearSession } from "./socket";
+import { socket, CreatedRoom, resendPendingAnswer } from "./socket";
+import { saveSession, getSession, clearSession } from "./session";
 import {
   GameView,
   Quiz,
@@ -20,25 +21,27 @@ import PlayerLobby from "./components/player/PlayerLobby";
 import PlayerAnswering from "./components/player/PlayerAnswering";
 import FinalPodium from "./components/shared/FinalPodium";
 import Confetti from "./components/shared/Confetti";
+import Icon from "./components/shared/Icon";
+
+type LobbyPlayer = { id: string; nickname: string; connected: boolean };
+type PauseReason = "host" | "host-disconnected";
+type Connection = "connected" | "reconnecting";
 
 export default function App() {
   const [searchParams] = useSearchParams();
   const initialCode = searchParams.get("code") ?? "";
 
-  const [view, setView] = useState<GameView>(
-    initialCode ? "player-join" : "home",
-  );
+  const [view, setView] = useState<GameView>(initialCode ? "player-join" : "home");
+  const [notice, setNotice] = useState("");
+  const [joinCode, setJoinCode] = useState(initialCode);
 
   // Host state
   const [roomCode, setRoomCode] = useState("");
   const [qrCode, setQrCode] = useState("");
   const [quiz, setQuiz] = useState<Quiz | null>(null);
-  const [players, setPlayers] = useState<{ id: string; nickname: string }[]>(
-    [],
-  );
-  const [savedQuizToLoad, setSavedQuizToLoad] = useState<SavedQuiz | null>(
-    null,
-  );
+  const [players, setPlayers] = useState<LobbyPlayer[]>([]);
+  const [savedQuizToLoad, setSavedQuizToLoad] = useState<SavedQuiz | null>(null);
+  const [showProblems, setShowProblems] = useState(false);
 
   // Shared game state
   const [question, setQuestion] = useState<QuestionStartPayload | null>(null);
@@ -47,509 +50,381 @@ export default function App() {
   const [answeredCount, setAnsweredCount] = useState(0);
   const [playerCount, setPlayerCount] = useState(0);
   const [showConfetti, setShowConfetti] = useState(false);
+  const [paused, setPaused] = useState<PauseReason | null>(null);
+  const [hostAway, setHostAway] = useState(false);
 
   // Player state
   const [nickname, setNickname] = useState("");
-  const [myResults, setMyResults] = useState<QuestionResultsPayload | null>(
-    null,
-  );
+  const [answerLocked, setAnswerLocked] = useState(false);
 
-  // Reconnection state
-  const [isReconnecting, setIsReconnecting] = useState(false);
-  const [reconnectAttempt, setReconnectAttempt] = useState(0);
-  const [connectionStatus, setConnectionStatus] = useState<
-    "connected" | "disconnected" | "reconnecting"
-  >("connected");
+  // Connection state
+  const [connection, setConnection] = useState<Connection>("connected");
+  const [restoring, setRestoring] = useState(() => {
+    const s = getSession();
+    return !!s && (!initialCode || s.roomCode === initialCode.toUpperCase());
+  });
 
-  // ── Check for existing session on mount ───────────────────────────────────
-  useEffect(() => {
+  const resetToHome = useCallback((message = "") => {
+    clearSession();
+    setPaused(null);
+    setHostAway(false);
+    setQuestion(null);
+    setResults(null);
+    setPlayers([]);
+    setRoomCode("");
+    setNotice(message);
+    setView("home");
+  }, []);
+
+  // ── Session restore: on first connect and after every reconnect ──────────
+  const viewRef = useRef(view);
+  viewRef.current = view;
+
+  const restoreSession = useCallback(() => {
     const session = getSession();
-    if (session && session.isPlayer && !initialCode) {
-      console.log("Found existing session, attempting to restore:", session);
-      setIsReconnecting(true);
-
-      // Wait for socket to connect, then try to reconnect
-      if (socket.connected) {
-        socket.emit(
-          "reconnect-to-room",
-          { code: session.roomCode, nickname: session.nickname },
-          (res: any) => {
-            if (res.ok) {
-              console.log("Session restored successfully!", res);
-              setRoomCode(res.roomCode);
-              setNickname(res.nickname);
-              setIsReconnecting(false);
-
-              // Restore appropriate view
-              if (res.state === "lobby") {
-                setView("player-lobby");
-              } else if (
-                res.state === "starting" ||
-                res.state === "question-active"
-              ) {
-                setView("player-answering");
-              } else if (res.state === "question-results") {
-                setView("player-results");
-              } else if (res.state === "final-results") {
-                setView("player-final");
-              }
-            } else {
-              console.log("Session restore failed:", res.error);
-              clearSession();
-              setIsReconnecting(false);
-            }
-          },
-        );
-      }
+    if (!session || (initialCode && session.roomCode !== initialCode.toUpperCase() && viewRef.current === "player-join")) {
+      setRestoring(false);
+      return;
     }
-  }, [initialCode]);
-
-  // ── Connection status monitoring ──────────────────────────────────────────
-  useEffect(() => {
-    const handleConnect = () => {
-      console.log("Socket connected");
-      setConnectionStatus("connected");
-      setReconnectAttempt(0);
-
-      // Try to restore session if we have one
-      const session = getSession();
-      if (session && session.isPlayer && isReconnecting) {
-        console.log("Attempting to reconnect to session:", session);
-        socket.emit(
-          "reconnect-to-room",
-          { code: session.roomCode, nickname: session.nickname },
-          (res: any) => {
-            if (res.ok) {
-              console.log("Successfully reconnected!", res);
-              setRoomCode(res.roomCode);
-              setNickname(res.nickname);
-              setIsReconnecting(false);
-
-              // Restore appropriate view based on game state
-              if (res.state === "lobby") {
-                setView("player-lobby");
-              } else if (
-                res.state === "starting" ||
-                res.state === "question-active"
-              ) {
-                setView("player-answering");
-              } else if (res.state === "question-results") {
-                setView("player-results");
-              } else if (res.state === "final-results") {
-                setView("player-final");
-              }
-            } else {
-              console.log("Reconnection failed:", res.error);
-              clearSession();
-              setIsReconnecting(false);
-              setView("home");
-            }
-          },
-        );
-      }
+    const fail = () => {
+      setRestoring(false);
+      const inGame = viewRef.current !== "home" && viewRef.current !== "player-join";
+      resetToHome(inGame ? "The game is no longer available." : "");
+      if (!inGame && initialCode) setView("player-join");
     };
 
-    const handleDisconnect = () => {
-      console.log("Socket disconnected");
-      setConnectionStatus("disconnected");
-
-      // Only show reconnecting if we have an active session
-      const session = getSession();
-      if (
-        session &&
-        session.isPlayer &&
-        view !== "home" &&
-        view !== "player-join"
-      ) {
-        setIsReconnecting(true);
-      }
-    };
-
-    const handleReconnectAttempt = (attemptNumber: number) => {
-      console.log("Reconnect attempt:", attemptNumber);
-      setConnectionStatus("reconnecting");
-      setReconnectAttempt(attemptNumber);
-    };
-
-    const handleReconnectError = (error: Error) => {
-      console.log("Reconnection error:", error);
-    };
-
-    const handleReconnectFailed = () => {
-      console.log("Reconnection failed");
-      setConnectionStatus("disconnected");
-      setIsReconnecting(false);
-      clearSession();
-      alert("Could not reconnect to the game. Returning to home.");
-      window.location.href = "/";
-    };
-
-    socket.on("connect", handleConnect);
-    socket.on("disconnect", handleDisconnect);
-    socket.on("reconnect_attempt", handleReconnectAttempt);
-    socket.on("reconnect_error", handleReconnectError);
-    socket.on("reconnect_failed", handleReconnectFailed);
-
-    return () => {
-      socket.off("connect", handleConnect);
-      socket.off("disconnect", handleDisconnect);
-      socket.off("reconnect_attempt", handleReconnectAttempt);
-      socket.off("reconnect_error", handleReconnectError);
-      socket.off("reconnect_failed", handleReconnectFailed);
-    };
-  }, [view, isReconnecting]);
-
-  // ── Socket event setup ───────────────────────────────────────────────────
-  useEffect(() => {
-    socket.on("game-starting", () => {
-      if (view === "host-lobby") setView("host-game");
-      if (view === "player-lobby") setView("player-answering");
-    });
-
-    socket.on("question-start", (payload: QuestionStartPayload) => {
-      setQuestion(payload);
-      setResults(null);
-      setAnsweredCount(0);
-      setView((prev) =>
-        prev.startsWith("host") ? "host-game" : "player-answering",
-      );
-    });
-
-    socket.on(
-      "player-answered",
-      (data: {
-        answeredCount: number;
-        totalPlayers: number;
-        nickname: string;
-      }) => {
-        setAnsweredCount(data.answeredCount);
-      },
-    );
-
-    socket.on("question-results", (payload: QuestionResultsPayload) => {
-      setResults(payload);
-      setMyResults(payload);
-      setView((prev) =>
-        prev.startsWith("host") ? "host-game" : "player-results",
-      );
-    });
-
-    socket.on("game-end", (payload: { players: PlayerStanding[] }) => {
-      setFinalStandings(payload.players);
-      setShowConfetti(true);
-      setView("player-final");
-      setTimeout(() => setShowConfetti(false), 6000);
-
-      // Clear session when game ends
-      clearSession();
-    });
-
-    socket.on("host-disconnected", () => {
-      clearSession();
-      alert("The host disconnected. Returning to home.");
-      window.location.href = "/";
-    });
-
-    socket.on("kicked", () => {
-      clearSession();
-      alert("You were kicked from the game.");
-      window.location.href = "/";
-    });
-
-    socket.on(
-      "player-joined",
-      (data: { id: string; nickname: string; playerCount: number }) => {
-        setPlayers((prev) => {
-          if (prev.find((p) => p.id === data.id)) return prev;
-          return [...prev, { id: data.id, nickname: data.nickname }];
-        });
-        setPlayerCount(data.playerCount);
-      },
-    );
-
-    socket.on("player-left", (data: { id: string; playerCount: number }) => {
-      setPlayers((prev) => prev.filter((p) => p.id !== data.id));
-      setPlayerCount(data.playerCount);
-    });
-
-    socket.on(
-      "player-disconnected",
-      (data: { id: string; nickname: string; playerCount: number }) => {
-        console.log(`Player ${data.nickname} disconnected`);
-        setPlayerCount(data.playerCount);
-        // Optionally update UI to show player as disconnected
-      },
-    );
-
-    socket.on(
-      "player-reconnected",
-      (data: { id: string; nickname: string; playerCount: number }) => {
-        console.log(`Player ${data.nickname} reconnected`);
-        setPlayers((prev) => {
-          const existing = prev.find((p) => p.nickname === data.nickname);
-          if (existing) {
-            // Update the socket ID
-            return prev.map((p) =>
-              p.nickname === data.nickname ? { ...p, id: data.id } : p,
+    if (session.role === "player") {
+      socket.emit(
+        "reconnect-to-room",
+        { code: session.roomCode, playerToken: session.playerToken },
+        (res: { ok: boolean; reason?: string; roomCode: string; nickname: string; state: string }) => {
+          if (!res.ok && res.reason === "not-in-room") {
+            // The room still exists, we were just dropped from it: offer to join again.
+            clearSession();
+            setRestoring(false);
+            setJoinCode(res.roomCode);
+            setNotice(
+              res.state === "lobby"
+                ? "You were away too long and left the waiting room. Join again below."
+                : "You were removed from this game.",
             );
+            setView(res.state === "lobby" ? "player-join" : "home");
+            return;
           }
-          return [...prev, { id: data.id, nickname: data.nickname }];
-        });
-        setPlayerCount(data.playerCount);
-      },
-    );
+          if (!res.ok) return fail();
+          setRestoring(false);
+          setRoomCode(res.roomCode);
+          setNickname(res.nickname);
+          resendPendingAnswer();
+          // Question / results / podium views are set by the events the server replays.
+          if (res.state === "lobby") setView("player-lobby");
+        },
+      );
+    } else {
+      socket.emit(
+        "reconnect-host",
+        { code: session.roomCode, hostToken: session.hostToken },
+        (res: {
+          ok: boolean;
+          roomCode: string;
+          qrCodeDataUrl: string;
+          quiz: Quiz;
+          state: string;
+          players: LobbyPlayer[];
+          playerCount: number;
+          answeredCount: number;
+        }) => {
+          if (!res.ok) return fail();
+          setRestoring(false);
+          setRoomCode(res.roomCode);
+          setQrCode(res.qrCodeDataUrl);
+          setQuiz(res.quiz);
+          setPlayers(res.players);
+          setPlayerCount(res.playerCount);
+          setAnsweredCount(res.answeredCount);
+          setView(res.state === "lobby" ? "host-lobby" : res.state === "final-results" ? "player-final" : "host-game");
+        },
+      );
+    }
+  }, [initialCode, resetToHome]);
 
-    return () => {
-      socket.off("game-starting");
-      socket.off("question-start");
-      socket.off("player-answered");
-      socket.off("question-results");
-      socket.off("game-end");
-      socket.off("host-disconnected");
-      socket.off("kicked");
-      socket.off("player-joined");
-      socket.off("player-left");
-      socket.off("player-disconnected");
-      socket.off("player-reconnected");
+  // Don't block the UI forever if the server is unreachable; restore still runs on connect.
+  useEffect(() => {
+    if (!restoring) return;
+    const t = setTimeout(() => setRestoring(false), 8000);
+    return () => clearTimeout(t);
+  }, [restoring]);
+
+  useEffect(() => {
+    const onConnect = () => {
+      setConnection("connected");
+      restoreSession();
     };
-  }, [view]);
+    const onDisconnect = (reason: string) => {
+      // A server-side kick or our own disconnect() won't reconnect on its own.
+      if (reason === "io server disconnect") socket.connect();
+      setConnection("reconnecting");
+    };
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    if (socket.connected) restoreSession();
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+    };
+  }, [restoreSession]);
+
+  // ── Game events (registered once; setters use functional updates) ────────
+  useEffect(() => {
+    const isHostView = (v: GameView) => v.startsWith("host");
+    const handlers: Record<string, (...args: any[]) => void> = {
+      "game-starting": () =>
+        setView((prev) => (prev === "host-lobby" ? "host-game" : prev === "player-lobby" ? "player-answering" : prev)),
+      "question-start": (payload: QuestionStartPayload) => {
+        setQuestion(payload);
+        setResults(null);
+        setAnswerLocked(false);
+        setAnsweredCount(0);
+        setView((prev) => (isHostView(prev) ? "host-game" : "player-answering"));
+      },
+      "answer-locked": () => setAnswerLocked(true),
+      "player-answered": (d: { answeredCount: number }) => setAnsweredCount(d.answeredCount),
+      "question-results": (payload: QuestionResultsPayload) => {
+        setResults(payload);
+        setView((prev) => (isHostView(prev) ? "host-game" : "player-results"));
+      },
+      "game-end": (payload: { players: PlayerStanding[] }) => {
+        setFinalStandings(payload.players);
+        setPaused(null);
+        setShowConfetti(true);
+        setView("player-final");
+        setTimeout(() => setShowConfetti(false), 6000);
+        clearSession();
+      },
+      "game-paused": (d: { reason: PauseReason }) => setPaused(d.reason),
+      "game-resumed": (d: { serverTime: number }) => {
+        setPaused(null);
+        resendPendingAnswer();
+        setQuestion((q) => (q ? { ...q, serverTime: d.serverTime } : q));
+      },
+      "host-away": () => setHostAway(true),
+      "host-reconnected": (d: { paused: boolean }) => {
+        setHostAway(false);
+        if (d.paused) setPaused("host");
+      },
+      "host-disconnected": () => resetToHome("The host ended the game."),
+      kicked: () => resetToHome("You were removed from the game."),
+      "player-joined": (d: { id: string; nickname: string; playerCount: number }) => {
+        setPlayers((prev) => (prev.some((p) => p.id === d.id) ? prev : [...prev, { id: d.id, nickname: d.nickname, connected: true }]));
+        setPlayerCount(d.playerCount);
+      },
+      "player-left": (d: { id: string; playerCount: number }) => {
+        setPlayers((prev) => prev.filter((p) => p.id !== d.id));
+        setPlayerCount(d.playerCount);
+      },
+      "player-disconnected": (d: { id: string; playerCount: number }) => {
+        setPlayers((prev) => prev.map((p) => (p.id === d.id ? { ...p, connected: false } : p)));
+        setPlayerCount(d.playerCount);
+      },
+      "player-reconnected": (d: { id: string; oldId: string; nickname: string; playerCount: number }) => {
+        setPlayers((prev) =>
+          prev.some((p) => p.id === d.oldId)
+            ? prev.map((p) => (p.id === d.oldId ? { ...p, id: d.id, connected: true } : p))
+            : [...prev, { id: d.id, nickname: d.nickname, connected: true }],
+        );
+        setPlayerCount(d.playerCount);
+      },
+    };
+    for (const [event, fn] of Object.entries(handlers)) socket.on(event, fn);
+    return () => {
+      for (const [event, fn] of Object.entries(handlers)) socket.off(event, fn);
+    };
+  }, [resetToHome]);
 
   // ── Host callbacks ───────────────────────────────────────────────────────
-  const handleCreateRoom = useCallback((q: Quiz, code: string, qr: string) => {
+  const handleCreateRoom = useCallback((q: Quiz, room: CreatedRoom) => {
     setQuiz(q);
-    setRoomCode(code);
-    setQrCode(qr);
+    setRoomCode(room.code);
+    setQrCode(room.qrCodeDataUrl);
     setPlayers([]);
     setView("host-lobby");
+    saveSession({ role: "host", roomCode: room.code, hostToken: room.hostToken });
+  }, []);
+
+  const openEditor = useCallback((q: SavedQuiz | null, withProblems = false) => {
+    setSavedQuizToLoad(q);
+    setShowProblems(withProblems);
+    setView("host-setup");
   }, []);
 
   const handleStartGame = useCallback(() => {
-    socket.emit(
-      "start-game",
-      { code: roomCode },
-      (res: { ok: boolean; error?: string }) => {
-        if (!res.ok) alert(res.error ?? "Could not start game");
-      },
-    );
+    socket.emit("start-game", { code: roomCode }, (res: { ok: boolean; error?: string }) => {
+      if (!res.ok) setNotice(res.error ?? "Could not start game");
+    });
   }, [roomCode]);
 
-  const handleNextQuestion = useCallback(() => {
-    socket.emit("next-question", { code: roomCode });
-  }, [roomCode]);
+  const handleNextQuestion = useCallback(() => socket.emit("next-question", { code: roomCode }), [roomCode]);
+  const handlePause = useCallback(() => socket.emit("pause-game", { code: roomCode }), [roomCode]);
+  const handleResume = useCallback(() => socket.emit("resume-game", { code: roomCode }), [roomCode]);
+
+  const leaveRoom = useCallback(() => {
+    socket.emit("leave-room");
+    resetToHome();
+  }, [resetToHome]);
 
   // ── Player callbacks ─────────────────────────────────────────────────────
-  const handleJoined = useCallback((code: string, nick: string) => {
+  const handleJoined = useCallback((code: string, nick: string, playerToken: string) => {
+    setNotice("");
     setRoomCode(code);
     setNickname(nick);
     setView("player-lobby");
-
-    // Save session for reconnection
-    saveSession({
-      roomCode: code,
-      nickname: nick,
-      isPlayer: true,
-    });
+    saveSession({ role: "player", roomCode: code, nickname: nick, playerToken });
   }, []);
 
-  // ── View switcher ─────────────────────────────────────────────────────────
+  // ── Overlays ─────────────────────────────────────────────────────────────
+  const isHost = view.startsWith("host");
+  const inRoom = view !== "home" && view !== "player-join" && view !== "host-setup" && view !== "host-library";
 
-  // Connection status indicator (subtle banner)
-  const connectionIndicator = connectionStatus !== "connected" &&
-    !isReconnecting && (
-      <div
-        style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          backgroundColor:
-            connectionStatus === "reconnecting" ? "#f59e0b" : "#ef4444",
-          color: "white",
-          padding: "0.5rem",
-          textAlign: "center",
-          fontSize: "0.875rem",
-          fontWeight: 700,
-          zIndex: 8888,
-          animation: "pulse 2s ease-in-out infinite",
-        }}
-      >
-        {connectionStatus === "reconnecting"
-          ? "🔄 Reconnecting..."
-          : "⚠️ Connection lost - Attempting to reconnect..."}
-      </div>
-    );
+  const overlays = (
+    <>
+      {connection === "reconnecting" && inRoom && (
+        <div className="conn-banner" role="status">
+          <Icon name="wifiOff" /> Connection lost, reconnecting…
+        </div>
+      )}
+      {restoring && (
+        <div className="overlay" role="status">
+          <p className="muted animate-pulse">Rejoining your game…</p>
+        </div>
+      )}
+      {!restoring && paused && view !== "player-final" && (
+        <div className="overlay" role="dialog" aria-modal="true" aria-labelledby="pause-title">
+          <div className="card stack text-center w-narrow" style={{ alignItems: "center" }}>
+            <Icon name="pause" className="icon-lg" />
+            <h2 id="pause-title">Game paused</h2>
+            <p className="muted">
+              {isHost
+                ? "The timer is stopped. Players keep their place."
+                : paused === "host-disconnected"
+                  ? "The host lost their connection. The game resumes when they come back."
+                  : "The host paused the game."}
+            </p>
+            {isHost && (
+              <div className="row" style={{ gap: "var(--s-3)" }}>
+                <button className="btn btn-secondary" onClick={leaveRoom}>
+                  End game
+                </button>
+                <button className="btn btn-primary" onClick={handleResume}>
+                  <Icon name="play" /> Resume
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {!paused && hostAway && !isHost && inRoom && view !== "player-final" && (
+        <div className="conn-banner" role="status">
+          <Icon name="wifiOff" /> The host is reconnecting…
+        </div>
+      )}
+    </>
+  );
 
-  // Reconnection overlay
-  const reconnectionOverlay = isReconnecting && (
-    <div
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: "rgba(0, 0, 0, 0.85)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 9999,
-        flexDirection: "column",
-        gap: "1.5rem",
-      }}
-    >
-      <div style={{ fontSize: "4rem" }}>🔄</div>
-      <div style={{ textAlign: "center" }}>
-        <h2 style={{ marginBottom: "0.5rem" }}>Reconnecting...</h2>
-        <p style={{ opacity: 0.7, fontSize: "1rem" }}>
-          {connectionStatus === "reconnecting"
-            ? `Attempt ${reconnectAttempt}`
-            : "Connection lost"}
-        </p>
-        <p style={{ opacity: 0.6, fontSize: "0.9rem", marginTop: "1rem" }}>
-          Please wait while we restore your session
-        </p>
-      </div>
+  const noticeBar = notice && (
+    <div className="notice-bar" role="status">
+      <span>{notice}</span>
+      <button className="btn btn-secondary btn-sm btn-icon" aria-label="Dismiss" onClick={() => setNotice("")}>
+        <Icon name="x" />
+      </button>
     </div>
   );
 
-  if (view === "home") {
-    return (
-      <>
-        {connectionIndicator}
-        {reconnectionOverlay}
-        <HomePage
-          onHost={() => setView("host-setup")}
-          onJoin={() => setView("player-join")}
-          onLibrary={() => setView("host-library")}
-        />
-      </>
-    );
-  }
+  const page = (() => {
+    switch (view) {
+      case "home":
+        return (
+          <>
+            {noticeBar}
+            <HomePage
+              onHost={() => openEditor(null)}
+              onJoin={() => setView("player-join")}
+              onLibrary={() => setView("host-library")}
+            />
+          </>
+        );
+      case "host-library":
+        return (
+          <QuizLibrary
+            onBack={() => setView("home")}
+            onNew={() => openEditor(null)}
+            onEdit={(q) => openEditor(q)}
+            onFix={(q) => openEditor(q, true)}
+            onCreated={handleCreateRoom}
+          />
+        );
+      case "host-setup":
+        return (
+          <HostSetup
+            key={savedQuizToLoad?.id ?? "new"}
+            onCreated={handleCreateRoom}
+            onBack={() => setView("host-library")}
+            initialQuiz={savedQuizToLoad ?? undefined}
+            showProblemsInitially={showProblems}
+          />
+        );
+      case "host-lobby":
+        return (
+          <HostLobby roomCode={roomCode} qrCode={qrCode} players={players} onStart={handleStartGame} onBack={leaveRoom} />
+        );
+      case "host-game":
+        return (
+          <HostGame
+            roomCode={roomCode}
+            question={question}
+            results={results}
+            players={players}
+            answeredCount={answeredCount}
+            totalPlayers={playerCount || players.length}
+            onNext={handleNextQuestion}
+            onPause={handlePause}
+            totalQuestions={quiz?.questions.length ?? 0}
+          />
+        );
+      case "player-join":
+        return (
+          <>
+            {noticeBar}
+            <PlayerJoin key={joinCode} initialCode={joinCode} onJoined={handleJoined} onBack={() => setView("home")} />
+          </>
+        );
+      case "player-lobby":
+        return <PlayerLobby nickname={nickname} roomCode={roomCode} onLeave={leaveRoom} />;
+      case "player-answering":
+      case "player-results":
+        return (
+          <PlayerAnswering
+            question={question}
+            results={view === "player-results" ? results : null}
+            nickname={nickname}
+            alreadyAnswered={answerLocked}
+          />
+        );
+      case "player-final":
+        return (
+          <>
+            {showConfetti && <Confetti />}
+            <FinalPodium players={finalStandings} myNickname={nickname} onPlayAgain={leaveRoom} />
+          </>
+        );
+      default:
+        return null;
+    }
+  })();
 
-  if (view === "host-library") {
-    return (
-      <>
-        {connectionIndicator}
-        {reconnectionOverlay}
-        <QuizLibrary
-          onBack={() => setView("home")}
-          onNew={() => {
-            setSavedQuizToLoad(null);
-            setView("host-setup");
-          }}
-          onLoad={(quiz) => {
-            setSavedQuizToLoad(quiz);
-            setView("host-setup");
-          }}
-        />
-      </>
-    );
-  }
-
-  if (view === "host-setup") {
-    return (
-      <>
-        {connectionIndicator}
-        {reconnectionOverlay}
-        <HostSetup
-          onCreated={handleCreateRoom}
-          onBack={() => setView("home")}
-          initialQuiz={savedQuizToLoad ?? undefined}
-        />
-      </>
-    );
-  }
-
-  if (view === "host-lobby") {
-    return (
-      <>
-        {connectionIndicator}
-        {reconnectionOverlay}
-        <HostLobby
-          roomCode={roomCode}
-          qrCode={qrCode}
-          players={players}
-          onStart={handleStartGame}
-          onBack={() => setView("home")}
-        />
-      </>
-    );
-  }
-
-  if (view === "host-game") {
-    return (
-      <>
-        {connectionIndicator}
-        {reconnectionOverlay}
-        <HostGame
-          roomCode={roomCode}
-          question={question}
-          results={results}
-          players={players}
-          answeredCount={answeredCount}
-          totalPlayers={playerCount || players.length}
-          onNext={handleNextQuestion}
-          totalQuestions={quiz?.questions.length ?? 0}
-        />
-      </>
-    );
-  }
-
-  if (view === "player-join") {
-    return (
-      <>
-        {connectionIndicator}
-        {reconnectionOverlay}
-        <PlayerJoin
-          initialCode={initialCode}
-          onJoined={handleJoined}
-          onBack={() => setView("home")}
-        />
-      </>
-    );
-  }
-
-  if (view === "player-lobby") {
-    return (
-      <>
-        {connectionIndicator}
-        {reconnectionOverlay}
-        <PlayerLobby nickname={nickname} roomCode={roomCode} />
-      </>
-    );
-  }
-
-  if (view === "player-answering" || view === "player-results") {
-    return (
-      <>
-        {connectionIndicator}
-        {reconnectionOverlay}
-        <PlayerAnswering
-          question={question}
-          results={view === "player-results" ? myResults : null}
-          nickname={nickname}
-        />
-      </>
-    );
-  }
-
-  if (view === "player-final") {
-    return (
-      <>
-        {showConfetti && <Confetti />}
-        {connectionIndicator}
-        {reconnectionOverlay}
-        <FinalPodium
-          players={finalStandings}
-          myNickname={nickname}
-          onPlayAgain={() => {
-            clearSession();
-            window.location.href = "/";
-          }}
-        />
-      </>
-    );
-  }
-
-  return null;
+  return (
+    <>
+      {overlays}
+      {page}
+    </>
+  );
 }

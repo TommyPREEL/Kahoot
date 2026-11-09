@@ -1,66 +1,46 @@
+import Icon from '../shared/Icon';
+
 interface Props {
   nickname: string;
   roomCode: string;
+  onLeave: () => void;
 }
 
-const EMOJIS = ['🎮','🕹️','🎯','🏆','⚡','🌟','🔥','💫','🎉','🎊'];
-
-export default function PlayerLobby({ nickname, roomCode }: Props) {
-  const emoji = EMOJIS[nickname.charCodeAt(0) % EMOJIS.length];
+export default function PlayerLobby({ nickname, roomCode, onLeave }: Props) {
+  // Initial letter avatar: no emoji, works for any nickname.
+  const initial = (nickname.trim().charAt(0) || '?').toUpperCase();
 
   return (
-    <div className="page center" style={{ flexDirection: 'column', gap: '1.5rem', textAlign: 'center' }}>
-      {/* Avatar */}
-      <div
-        className="animate-bounceIn"
-        style={{
-          width: 'min(120px, 25vw)',
-          height: 'min(120px, 25vw)',
-          borderRadius: '50%',
-          background: 'rgba(255,255,255,0.15)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: '3.5rem',
-          border: '4px solid rgba(255,255,255,0.3)',
-          animation: 'glow 2s ease-in-out infinite',
-        }}
-      >
-        {emoji}
-      </div>
+    <div className="page center page-col">
+      <div className="avatar animate-bounceIn" aria-hidden="true">{initial}</div>
 
       <div className="animate-fadeInUp">
-        <h1 style={{ marginBottom: '0.25rem' }}>{nickname}</h1>
-        <p style={{ opacity: 0.7, fontWeight: 700 }}>
-          Room <span style={{ color: '#ffd700', fontWeight: 900 }}>{roomCode}</span>
+        <h1 style={{ marginBottom: 'var(--s-1)' }}>{nickname}</h1>
+        <p className="muted">
+          Room <span className="text-accent" style={{ fontWeight: 800 }}>{roomCode}</span>
         </p>
       </div>
 
-      <div
-        className="card animate-fadeInUp delay-1"
-        style={{ maxWidth: '360px', width: '100%', textAlign: 'center' }}
-      >
-        <div style={{ fontSize: '2rem', marginBottom: '0.5rem', animation: 'pulse 1.5s ease-in-out infinite' }}>⏳</div>
-        <h3>You're in!</h3>
-        <p style={{ opacity: 0.7, fontWeight: 600, marginTop: '0.3rem', fontSize: '0.95rem' }}>
+      <div className="card w-narrow text-center animate-fadeInUp delay-1">
+        <h3>You're in</h3>
+        <p className="muted" style={{ marginTop: 'var(--s-2)' }}>
           Waiting for the host to start the game…
         </p>
       </div>
 
-      {/* Floating decorations */}
+      <button className="btn btn-secondary btn-sm" onClick={onLeave}>
+        <Icon name="back" /> Leave room
+      </button>
+
       {['▲','◆','●','■'].map((shape, i) => (
         <div
           key={i}
+          aria-hidden="true"
+          className="deco-shape"
           style={{
-            position: 'fixed',
-            fontSize: '2rem',
-            opacity: 0.07,
-            color: ['#e21b3c','#1368ce','#d89e00','#26890c'][i],
-            animation: `pulse ${2 + i * 0.5}s ease-in-out infinite`,
-            animationDelay: `${i * 0.3}s`,
+            color: `var(--ans-${i})`,
             left: `${[10, 80, 15, 75][i]}%`,
             top: `${[20, 15, 70, 65][i]}%`,
-            pointerEvents: 'none',
           }}
         >
           {shape}

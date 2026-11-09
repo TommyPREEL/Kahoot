@@ -1,340 +1,209 @@
-import { useState } from 'react';
-import { socket } from '../../socket';
-import { Quiz, Question, AnswerOptionFull, QuestionType, SavedQuiz } from '../../types';
+import { useEffect, useRef, useState } from 'react';
+import { createRoom, CreatedRoom } from '../../socket';
+import { Quiz, SavedQuestion, SavedQuiz } from '../../types';
 import QuestionEditor from './QuestionEditor';
-import { QUIZ_STORAGE_KEY, getSavedQuizzes } from './QuizLibrary';
+import { saveQuiz } from './QuizLibrary';
+import { blankQuestion, exportQuizzes, newId, questionProblems, quizIsReady, toServerQuiz } from '../../quizFile';
+import Icon from '../shared/Icon';
 
 interface Props {
-  onCreated: (quiz: Quiz, code: string, qr: string) => void;
+  onCreated: (quiz: Quiz, room: CreatedRoom) => void;
   onBack: () => void;
   initialQuiz?: SavedQuiz;
+  /** Opened from "Host" in the library on a quiz that isn't ready: show what's missing right away. */
+  showProblemsInitially?: boolean;
 }
 
-const COLORS = ['#e21b3c','#1368ce','#d89e00','#26890c'];
-const SHAPES = ['▲','◆','●','■'];
-
-function makeId() {
-  return Math.random().toString(36).slice(2, 9);
-}
-
-function defaultQuestion(): Question & { _answers: AnswerOptionFull[]; _correctBool: boolean } {
-  return {
-    id: makeId(),
-    type: 'quiz',
-    text: '',
-    timeLimit: 20,
-    maxPoints: 1000,
-    _correctBool: true,
-    _answers: [
-      { id: makeId(), text: '', isCorrect: true },
-      { id: makeId(), text: '', isCorrect: false },
-      { id: makeId(), text: '', isCorrect: false },
-      { id: makeId(), text: '', isCorrect: false },
-    ],
-    sliderMin: 0,
-    sliderMax: 100,
-    sliderCorrect: 50,
-    sliderTolerance: 5,
-  };
-}
-
-export default function HostSetup({ onCreated, onBack, initialQuiz }: Props) {
+export default function HostSetup({ onCreated, onBack, initialQuiz, showProblemsInitially = false }: Props) {
+  const [quizId] = useState(() => initialQuiz?.id ?? newId());
   const [title, setTitle] = useState(initialQuiz?.title ?? '');
-  const [questions, setQuestions] = useState<ReturnType<typeof defaultQuestion>[]>(
-    initialQuiz ? (initialQuiz.questions as ReturnType<typeof defaultQuestion>[]) : [defaultQuestion()]
-  );
-  const [editingIdx, setEditingIdx] = useState<number | null>(0);
-  const [loading, setLoading] = useState(false);
+  const [questions, setQuestions] = useState<SavedQuestion[]>(() => initialQuiz?.questions ?? [blankQuestion()]);
+  const [showProblems, setShowProblems] = useState(showProblemsInitially);
+  const [saved, setSaved] = useState(!!initialQuiz);
+  const [hosting, setHosting] = useState(false);
   const [error, setError] = useState('');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [saveLabel, setSaveLabel] = useState<'idle' | 'saved'>('idle');
-  const [quizId] = useState<string>(() => initialQuiz?.id ?? makeId());
+
+  // ── Autosave: every edit lands in the library, there is no Save button to forget ──
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) { firstRender.current = false; return; }
+    setSaved(false);
+    if (!title.trim() && questions.every(q => !q.text.trim())) return; // don't store an untouched blank quiz
+    const t = setTimeout(() => {
+      saveQuiz({ id: quizId, title: title.trim() || 'Untitled quiz', questions, savedAt: new Date().toISOString() });
+      setSaved(true);
+    }, 500);
+    return () => clearTimeout(t);
+  }, [title, questions, quizId]);
+
+  const updateAt = (i: number, q: SavedQuestion) => setQuestions(prev => prev.map((x, j) => (j === i ? q : x)));
 
   const addQuestion = () => {
-    const q = defaultQuestion();
+    const q = blankQuestion();
     setQuestions(prev => [...prev, q]);
-    setEditingIdx(questions.length);
-    setSidebarOpen(false);
+    requestAnimationFrame(() => document.getElementById(`text-${q.id}`)?.focus());
   };
 
-  const updateQuestion = (idx: number, updated: ReturnType<typeof defaultQuestion>) => {
-    setQuestions(prev => prev.map((q, i) => (i === idx ? updated : q)));
-  };
-
-  const deleteQuestion = (idx: number) => {
-    setQuestions(prev => prev.filter((_, i) => i !== idx));
-    setEditingIdx(null);
-  };
-
-  const duplicateQuestion = (idx: number) => {
-    const dup = { ...questions[idx], id: makeId() };
-    const next = [...questions];
-    next.splice(idx + 1, 0, dup);
-    setQuestions(next);
-  };
-
-  const buildServerQuiz = (): Quiz => ({
-    title,
-    questions: questions.map(q => {
-      const base: Question = {
-        id: q.id,
-        type: q.type,
-        text: q.text,
-        timeLimit: q.timeLimit,
-        maxPoints: q.maxPoints,
-      };
-
-      if (q.type === 'quiz' || q.type === 'multi-select') {
-        base.answers = q._answers.map(a => ({ id: a.id, text: a.text, isCorrect: a.isCorrect }));
-      } else if (q.type === 'true-false') {
-        base.answers = [
-          { id: 'true',  text: 'True',  isCorrect: q._correctBool },
-          { id: 'false', text: 'False', isCorrect: !q._correctBool },
-        ];
-      } else if (q.type === 'slider') {
-        base.sliderMin = q.sliderMin;
-        base.sliderMax = q.sliderMax;
-        base.sliderCorrect = q.sliderCorrect;
-        base.sliderTolerance = q.sliderTolerance;
-      }
-
-      return base;
-    }),
-  });
-
-  const validate = (): string => {
-    if (!title.trim()) return 'Quiz title is required';
-    if (questions.length === 0) return 'Add at least one question';
-    for (let i = 0; i < questions.length; i++) {
-      const q = questions[i];
-      if (!q.text.trim()) return `Question ${i + 1} has no text`;
-      if (q.type === 'quiz' || q.type === 'multi-select') {
-        if (q._answers.some(a => !a.text.trim())) return `Question ${i + 1}: all answers must have text`;
-        if (!q._answers.some(a => a.isCorrect)) return `Question ${i + 1}: mark at least one correct answer`;
-        if (q.type === 'quiz' && q._answers.filter(a => a.isCorrect).length > 1)
-          return `Question ${i + 1}: quiz type allows only one correct answer`;
-      }
-    }
-    return '';
-  };
-
-  const handleSave = () => {
-    if (!title.trim()) { setError('Quiz title is required to save'); return; }
-    setError('');
-    const saved = getSavedQuizzes();
-    const entry: SavedQuiz = { id: quizId, title, questions, savedAt: new Date().toISOString() };
-    const idx = saved.findIndex(q => q.id === quizId);
-    if (idx >= 0) saved[idx] = entry; else saved.unshift(entry);
-    localStorage.setItem(QUIZ_STORAGE_KEY, JSON.stringify(saved));
-    setSaveLabel('saved');
-    setTimeout(() => setSaveLabel('idle'), 2000);
-  };
-
-  const handleCreate = () => {
-    const err = validate();
-    if (err) { setError(err); return; }
-    setError('');
-    setLoading(true);
-    const serverQuiz = buildServerQuiz();
-
-    socket.emit('create-room', { quiz: serverQuiz }, (res: { ok: boolean; code?: string; qrCodeDataUrl?: string; error?: string }) => {
-      setLoading(false);
-      if (!res.ok || !res.code) {
-        setError(res.error ?? 'Failed to create room');
-        return;
-      }
-      onCreated(serverQuiz, res.code, res.qrCodeDataUrl ?? '');
+  const duplicateAt = (i: number) =>
+    setQuestions(prev => {
+      const src = prev[i];
+      const copy = { ...src, id: newId(), _answers: src._answers.map(a => ({ ...a, id: newId() })) };
+      return [...prev.slice(0, i + 1), copy, ...prev.slice(i + 1)];
     });
-  };
 
-  const selectQuestion = (idx: number) => {
-    setEditingIdx(idx);
-    setSidebarOpen(false);
+  // ── Reordering: drag the handle (mouse or touch), or use arrow keys on it ──
+  const listRef = useRef<HTMLDivElement>(null);
+  const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
+
+  const move = (from: number, to: number) =>
+    setQuestions(prev => {
+      const next = [...prev];
+      next.splice(to, 0, ...next.splice(from, 1));
+      return next;
+    });
+
+  const dropIndexAt = (y: number, from: number) =>
+    Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-qcard]') ?? [])
+      .filter(el => Number(el.dataset.qcard) !== from)
+      .filter(el => {
+        const r = el.getBoundingClientRect();
+        return r.top + r.height / 2 < y;
+      }).length;
+
+  const handleFor = (i: number) => (
+    <button
+      className="drag-handle"
+      aria-label={`Move question ${i + 1}. Use the up and down arrow keys.`}
+      title="Drag to reorder"
+      onPointerDown={e => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setDrag({ from: i, to: i });
+        // Cards collapse while dragging; keep the grabbed one under the finger.
+        const el = e.currentTarget;
+        requestAnimationFrame(() => el.scrollIntoView({ block: 'center' }));
+      }}
+      onPointerMove={e => {
+        if (!drag) return;
+        const to = dropIndexAt(e.clientY, drag.from);
+        if (to !== drag.to) setDrag({ ...drag, to });
+      }}
+      onPointerUp={() => {
+        if (drag && drag.from !== drag.to) move(drag.from, drag.to);
+        setDrag(null);
+      }}
+      onPointerCancel={() => setDrag(null)}
+      onKeyDown={e => {
+        const to = e.key === 'ArrowUp' ? i - 1 : e.key === 'ArrowDown' ? i + 1 : -1;
+        if (to < 0 || to >= questions.length) return;
+        e.preventDefault();
+        move(i, to);
+        requestAnimationFrame(() =>
+          listRef.current?.querySelector<HTMLElement>(`[data-qcard="${to}"] .drag-handle`)?.focus(),
+        );
+      }}
+    >
+      <Icon name="grip" />
+    </button>
+  );
+
+  // While dragging, show the cards in their would-be order.
+  const shown = questions.map((q, i) => ({ q, i }));
+  if (drag) shown.splice(drag.to, 0, ...shown.splice(drag.from, 1));
+
+  // ── Host ──
+  const draft = { title, questions };
+  const ready = quizIsReady(draft);
+  const problemCount = questions.filter(q => questionProblems(q).length > 0).length;
+
+  const handleHost = async () => {
+    setError('');
+    if (!ready) {
+      setShowProblems(true);
+      const firstBad = questions.find(q => questionProblems(q).length > 0);
+      if (!title.trim()) document.getElementById('quiz-title')?.focus();
+      else if (firstBad) document.getElementById(`text-${firstBad.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    setHosting(true);
+    try {
+      const serverQuiz = toServerQuiz(draft);
+      onCreated(serverQuiz, await createRoom(serverQuiz));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not create the room.');
+      setHosting(false);
+    }
   };
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--purple-dark)' }}>
-      {/* Mobile top bar */}
-      <div
-        style={{
-          display: 'none',
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          zIndex: 100,
-          background: 'rgba(0,0,0,0.75)',
-          backdropFilter: 'blur(12px)',
-          padding: '0.5rem 0.75rem',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          borderBottom: '1px solid rgba(255,255,255,0.1)',
-        }}
-        className="mobile-topbar"
-      >
-        <button className="btn btn-secondary btn-sm" onClick={onBack}>←</button>
-        <span style={{ fontWeight: 800, fontSize: '0.9rem' }}>
-          {title || 'New Quiz'} · Q{(editingIdx ?? 0) + 1}/{questions.length}
-        </span>
-        <button
-          className="btn btn-secondary btn-sm"
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-        >
-          ☰
+    <div className="editor-page">
+      <header className="editor-bar">
+        <button className="btn btn-ghost btn-sm" onClick={onBack}>
+          <Icon name="back" /> My quizzes
         </button>
-      </div>
-
-      {/* Sidebar overlay for mobile */}
-      {sidebarOpen && (
-        <div
-          onClick={() => setSidebarOpen(false)}
-          style={{
-            display: 'none',
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.5)',
-            zIndex: 199,
-          }}
-          className="mobile-overlay"
-        />
-      )}
-
-      {/* Sidebar: question list */}
-      <aside
-        className="setup-sidebar"
-        style={{
-          width: '240px',
-          flexShrink: 0,
-          background: 'rgba(0,0,0,0.3)',
-          borderRight: '1px solid rgba(255,255,255,0.1)',
-          display: 'flex',
-          flexDirection: 'column',
-          overflowY: 'auto',
-          transition: 'transform 0.3s ease',
-        }}
-      >
-
-        {/* Quiz title */}
-        <div style={{ padding: '1rem', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-          <button className="btn btn-secondary btn-sm" onClick={onBack} style={{ marginBottom: '0.75rem', width: '100%' }}>← Back</button>
-          <input
-            className="input"
-            placeholder="Quiz title…"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            style={{ fontSize: '0.9rem' }}
-          />
-        </div>
-
-        {/* Question list */}
-        <div style={{ flex: 1, padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-          {questions.map((q, i) => (
-            <button
-              key={q.id}
-              onClick={() => selectQuestion(i)}
-              style={{
-                background: editingIdx === i ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.07)',
-                border: editingIdx === i ? '2px solid rgba(255,255,255,0.6)' : '2px solid transparent',
-                borderRadius: '8px',
-                padding: '0.6rem 0.75rem',
-                color: '#fff',
-                fontFamily: 'var(--font)',
-                fontWeight: 700,
-                fontSize: '0.82rem',
-                cursor: 'pointer',
-                textAlign: 'left',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                transition: 'background 0.15s',
-              }}
-            >
-              <span style={{ opacity: 0.6, fontWeight: 800, minWidth: '18px' }}>{i + 1}</span>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {q.text || 'Untitled question'}
-              </span>
-              <span style={{ opacity: 0.5, fontSize: '0.75rem' }}>
-                {q.type === 'quiz' ? '🔵' : q.type === 'true-false' ? '✅' : q.type === 'multi-select' ? '☑️' : '🎚️'}
-              </span>
-            </button>
-          ))}
-
+        <span className="editor-status muted" role="status">
+          {saved ? <><Icon name="check" /> Saved</> : title || questions.some(q => q.text) ? 'Saving…' : ''}
+        </span>
+        <div className="row" style={{ gap: 'var(--s-2)' }}>
           <button
             className="btn btn-secondary btn-sm"
-            onClick={addQuestion}
-            style={{ marginTop: '0.5rem', width: '100%' }}
+            onClick={() => exportQuizzes([{ id: quizId, title: title || 'Untitled quiz', questions, savedAt: new Date().toISOString() }])}
           >
-            + Add question
+            <Icon name="download" /> <span className="hide-sm">Export</span>
+          </button>
+          <button className="btn btn-primary btn-sm" onClick={handleHost} disabled={hosting}>
+            <Icon name="play" /> {hosting ? 'Opening…' : 'Host game'}
           </button>
         </div>
+      </header>
 
-        {/* Create button */}
-        <div style={{ padding: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {error && (
-            <p style={{ color: '#ff8888', fontSize: '0.8rem', marginBottom: '0', fontWeight: 700 }}>
-              ⚠ {error}
-            </p>
-          )}
-          <button
-            className="btn btn-secondary"
-            style={{ width: '100%', borderRadius: '50px' }}
-            onClick={handleSave}
-          >
-            {saveLabel === 'saved' ? '✅ Saved!' : '💾 Save Quiz'}
-          </button>
-          <button
-            className="btn btn-primary"
-            style={{ width: '100%', borderRadius: '50px' }}
-            onClick={handleCreate}
-            disabled={loading}
-          >
-            {loading ? '⏳ Creating…' : '🚀 Create Room'}
-          </button>
-        </div>
-      </aside>
-
-      {/* Main editor area */}
-      <main className="setup-main" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {editingIdx !== null && questions[editingIdx] ? (
-          <QuestionEditor
-            question={questions[editingIdx]}
-            index={editingIdx}
-            total={questions.length}
-            onChange={q => updateQuestion(editingIdx, q)}
-            onDelete={() => deleteQuestion(editingIdx)}
-            onDuplicate={() => duplicateQuestion(editingIdx)}
-            COLORS={COLORS}
-            SHAPES={SHAPES}
+      <main className="editor-main">
+        <div className="qfield">
+          <label className="field-label" htmlFor="quiz-title">Quiz title</label>
+          <input
+            id="quiz-title"
+            className="input editor-title"
+            placeholder="e.g. General knowledge"
+            value={title}
+            maxLength={120}
+            onChange={e => setTitle(e.target.value)}
+            aria-invalid={showProblems && !title.trim()}
           />
-        ) : (
-          <div className="center" style={{ flex: 1, flexDirection: 'column', gap: '1rem', opacity: 0.5 }}>
-            <div style={{ fontSize: '4rem' }}>📝</div>
-            <p style={{ fontWeight: 700 }}>Select a question to edit</p>
-          </div>
-        )}
-      </main>
+          {showProblems && !title.trim() && <p className="field-error">Give your quiz a title.</p>}
+        </div>
 
-      {/* Responsive styles */}
-      <style>{`
-        @media (max-width: 768px) {
-          .mobile-topbar { display: flex !important; }
-          .mobile-overlay { display: block !important; }
-          .setup-sidebar {
-            position: fixed !important;
-            top: 0;
-            left: 0;
-            bottom: 0;
-            z-index: 200;
-            width: 280px !important;
-            background: var(--purple-dark) !important;
-            transform: ${sidebarOpen ? 'translateX(0)' : 'translateX(-100%)'};
-          }
-          .setup-main {
-            padding-top: 52px;
-            width: 100%;
-          }
-        }
-      `}</style>
+        {(error || (showProblems && problemCount > 0)) && (
+          <p className="alert-error" role="alert">
+            <Icon name="alert" />
+            {error || `${problemCount} question${problemCount > 1 ? 's' : ''} still need${problemCount > 1 ? '' : 's'} work before you can host.`}
+          </p>
+        )}
+
+        <div ref={listRef} className="qcard-list">
+          {shown.map(({ q, i }) => (
+            <div key={q.id} data-qcard={i} className={drag?.from === i ? 'is-dragging' : undefined}>
+              <QuestionEditor
+                question={q}
+                index={i}
+                onChange={next => updateAt(i, next)}
+                onDuplicate={() => duplicateAt(i)}
+                onDelete={questions.length > 1 ? () => {
+                  if (q.text.trim() && !window.confirm(`Delete question ${i + 1}?`)) return;
+                  setQuestions(prev => prev.filter((_, j) => j !== i));
+                } : null}
+                handle={handleFor(i)}
+                problems={showProblems ? questionProblems(q) : []}
+                compact={!!drag}
+              />
+            </div>
+          ))}
+        </div>
+
+        <button className="btn btn-secondary btn-block add-question" onClick={addQuestion}>
+          + Add a question
+        </button>
+      </main>
     </div>
   );
 }

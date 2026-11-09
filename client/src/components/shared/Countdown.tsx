@@ -29,30 +29,8 @@ export default function Countdown({ from }: Props) {
   if (!visible) return null;
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(46,14,110,0.85)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-        backdropFilter: 'blur(4px)',
-      }}
-    >
-      <div
-        key={count}
-        style={{
-          fontSize: 'clamp(6rem, 20vw, 14rem)',
-          fontWeight: 900,
-          color: '#ffd700',
-          lineHeight: 1,
-          animation: 'countdownPop 0.9s cubic-bezier(0.34, 1.56, 0.64, 1) both',
-          textShadow: '0 0 60px rgba(255,215,0,0.5)',
-          userSelect: 'none',
-        }}
-      >
+    <div className="overlay">
+      <div key={count} className="countdown-num">
         {count === 0 ? 'GO!' : count}
       </div>
     </div>

@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { socket } from '../../socket';
+import Icon from '../shared/Icon';
 
 interface Props {
   initialCode: string;
-  onJoined: (code: string, nickname: string) => void;
+  onJoined: (code: string, nickname: string, playerToken: string) => void;
   onBack: () => void;
 }
 
@@ -25,66 +26,60 @@ export default function PlayerJoin({ initialCode, onJoined, onBack }: Props) {
     socket.emit(
       'join-room',
       { code: trimCode, nickname: trimNick },
-      (res: { ok: boolean; error?: string; roomCode?: string; nickname?: string }) => {
+      (res: { ok: boolean; error?: string; roomCode?: string; nickname?: string; playerToken?: string }) => {
         setLoading(false);
-        if (!res.ok) {
+        if (!res.ok || !res.playerToken) {
           setError(res.error ?? 'Could not join room');
           return;
         }
-        onJoined(res.roomCode ?? trimCode, res.nickname ?? trimNick);
+        onJoined(res.roomCode ?? trimCode, res.nickname ?? trimNick, res.playerToken);
       }
     );
   };
 
   return (
-    <div className="page center" style={{ flexDirection: 'column', gap: '1.5rem' }}>
-      <div className="animate-fadeInDown" style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🎯</div>
-        <h1>Join a Game</h1>
-        <p style={{ opacity: 0.7, fontWeight: 600, marginTop: '0.25rem' }}>Enter the room code to play</p>
+    <div className="page center page-col">
+      <div className="animate-fadeInDown">
+        <h1>Join a game</h1>
+        <p className="muted">The code is on the host screen.</p>
       </div>
 
       <div
-        className="card animate-fadeInUp"
-        style={{ width: '100%', maxWidth: '380px', display: 'flex', flexDirection: 'column', gap: '1rem' }}
+        className="card stack w-narrow animate-fadeInUp"
       >
         <div>
-          <label style={{ fontSize: '0.85rem', fontWeight: 800, opacity: 0.7, display: 'block', marginBottom: '0.4rem' }}>
-            Room Code
+          <label className="field-label" htmlFor="room-code">
+            Room code
           </label>
           <input
-            className="input"
-            placeholder="e.g. AZ5R2T"
+            id="room-code" className="input input-code"
+            placeholder="AZ5R2T"
             value={code}
             onChange={e => setCode(e.target.value.toUpperCase())}
             onKeyDown={e => e.key === 'Enter' && handleJoin()}
-            style={{ fontSize: '1.5rem', fontWeight: 900, textAlign: 'center', letterSpacing: '0.15em' }}
             maxLength={8}
             autoFocus
           />
         </div>
 
         <div>
-          <label style={{ fontSize: '0.85rem', fontWeight: 800, opacity: 0.7, display: 'block', marginBottom: '0.4rem' }}>
+          <label className="field-label" htmlFor="nickname">
             Nickname
           </label>
           <input
+            id="nickname"
             className="input"
             placeholder="Your name…"
             value={nickname}
             onChange={e => setNickname(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleJoin()}
             maxLength={24}
-            style={{ fontSize: '1.1rem', fontWeight: 700 }}
           />
         </div>
 
         {error && (
-          <div
-            className="animate-shake"
-            style={{ background: 'rgba(226,27,60,0.3)', border: '1px solid #e21b3c', borderRadius: '8px', padding: '0.5rem 0.75rem', fontWeight: 700, fontSize: '0.9rem' }}
-          >
-            ⚠ {error}
+          <div className="alert-error animate-shake" role="alert">
+            <Icon name="alert" /> {error}
           </div>
         )}
 
@@ -92,13 +87,12 @@ export default function PlayerJoin({ initialCode, onJoined, onBack }: Props) {
           className="btn btn-primary"
           onClick={handleJoin}
           disabled={loading}
-          style={{ borderRadius: '50px', fontSize: '1.1rem', padding: '0.85rem' }}
         >
-          {loading ? '⏳ Joining…' : '🎮 Join Game'}
+          {loading ? 'Joining…' : 'Join game'}
         </button>
 
         <button className="btn btn-secondary btn-sm" onClick={onBack}>
-          ← Back
+          <Icon name="back" /> Back
         </button>
       </div>
     </div>
